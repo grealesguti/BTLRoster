@@ -1,0 +1,31 @@
+Day,Hour,Name,Availability
+2025-09-29,09:00,Emma Malabanan,available
+2025-09-29,13:00,Emma Malabanan,unavailable
+2025-09-30,09:00,Emma Malabanan,available
+2025-09-30,13:00,Emma Malabanan,unavailable
+2025-10-01,09:00,Emma Malabanan,available
+2025-10-01,13:00,Emma Malabanan,unavailable
+2025-10-02,09:00,Emma Malabanan,available
+2025-10-02,13:00,Emma Malabanan,unavailable
+2025-10-03,09:00,Emma Malabanan,available
+2025-10-03,13:00,Emma Malabanan,unavailable
+2025-09-29,09:00,Robert,unavailable
+2025-09-29,13:00,Robert,unavailable
+2025-09-30,09:00,Robert,unavailable
+2025-09-30,13:00,Robert,unavailable
+2025-10-01,09:00,Robert,available
+2025-10-01,13:00,Robert,available
+2025-10-02,09:00,Robert,unavailable
+2025-10-02,13:00,Robert,unavailable
+2025-10-03,09:00,Robert,available
+2025-10-03,13:00,Robert,available
+2025-09-29,09:00,Simon Gakuru,available
+2025-09-29,13:00,Simon Gakuru,unavailable
+2025-09-30,09:00,Simon Gakuru,available
+2025-09-30,13:00,Simon Gakuru,unavailable
+2025-10-01,09:00,Simon Gakuru,unavailable
+2025-10-01,13:00,Simon Gakuru,unavailable
+2025-10-02,09:00,Simon Gakuru,available
+2025-10-02,13:00,Simon Gakuru,unavailable
+2025-10-03,09:00,Simon Gakuru,available
+2025-10-03,13:00,Simon Gakuru,unavailable

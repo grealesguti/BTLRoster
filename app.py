@@ -4,124 +4,235 @@ import os
 from datetime import datetime
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import html
+from datetime import datetime
+from ics import Calendar, Event
+from datetime import datetime, timedelta
+import streamlit as st
+
 
 # -------------------
 # CONFIG
 # -------------------
-newdle_folder = "Newdles"
-save_folder = "weekly_rosters"
-os.makedirs(save_folder, exist_ok=True)
+NEWDLE_FOLDER = "Newdles"
+SAVE_FOLDER = "weekly_rosters"
+os.makedirs(SAVE_FOLDER, exist_ok=True)
+
+WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
+CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
+SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
+PASSWORD = "mypassword123"  # Replace with your desired password
+activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Gluing", "Beam Precal.", "Grounding Strips"]
 
 # -------------------
-# Load newest CSV from Newdles
+# Utility functions
 # -------------------
-csv_files = [f for f in os.listdir(newdle_folder) if f.endswith(".csv")]
-if not csv_files:
-    st.error("No CSV files found in Newdles folder.")
-    st.stop()
 
-newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(newdle_folder, f)))
-availability_csv = os.path.join(newdle_folder, newest_csv)
-st.info(f"Using newest CSV: {availability_csv}")
 
-availability_df = pd.read_csv(availability_csv)
+def load_latest_newdle_csv():
+    csv_files = [f for f in os.listdir(NEWDLE_FOLDER) if f.endswith(".csv")]
+    if not csv_files:
+        return None
+    newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(NEWDLE_FOLDER, f)))
+    return pd.read_csv(os.path.join(NEWDLE_FOLDER, newest_csv))
 
-employees = sorted(availability_df['Name'].unique())
-days = sorted(availability_df['Day'].unique())
-shift_hours = sorted(availability_df['Hour'].unique())
+def get_latest_roster_csv(save_folder):
+    """Return the path of the latest CSV in the folder."""
+    csv_files = [f for f in os.listdir(save_folder) if f.endswith(".csv")]
+    if not csv_files:
+        return None
+    latest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(save_folder, f)))
+    return os.path.join(save_folder, latest_csv)
 
-activities = ["None", "Cleaning", "Maintenance", "Support", "Inventory"]
+def generate_employee_ics_from_csv(csv_path, employee_name):
+    """Generate an ICS calendar file for the specified employee from a CSV."""
+    df = pd.read_csv(csv_path)
+    c = Calendar()
+    for _, row in df.iterrows():
+        day = row['Day']
+        hour = row['Hour']
+        emp_activity_pairs = [(row['Employee1'], row['Activity1']),
+                              (row['Employee2'], row['Activity1']),
+                              (row['Employee3'], row['Activity2']),
+                              (row['Employee4'], row['Activity2'])]
+        for emp, act in emp_activity_pairs:
+            if emp == employee_name and act != "None":
+                start_dt = datetime.strptime(f"{day} {hour}", "%Y-%m-%d %H:%M")
+                end_dt = start_dt + timedelta(hours=1)  # assume 1-hour shifts
+                e = Event()
+                e.name = f"Shift: {act}"
+                e.begin = start_dt
+                e.end = end_dt
+                c.events.add(e)
+    return c
 
-# Colors
-colors = plt.cm.tab10.colors
-employee_colors = {emp: colors[i % len(colors)] for i, emp in enumerate(employees)}
-activity_colors = plt.cm.Set2.colors
-activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray"
-                        for i, act in enumerate(activities)}
-
-# Map availability
-availability_map = {day:{} for day in days}
-for _, row in availability_df.iterrows():
-    if str(row['Availability']).strip().lower() == "available":
-        availability_map[row['Day']].setdefault(row['Hour'], []).append(row['Name'])
-
-# -------------------
-# Prefill from last roster CSV
-# -------------------
-roster_files = [f for f in os.listdir(save_folder) if f.endswith(".csv")]
-latest_roster_df = None
-if roster_files:
-    latest_roster = max(roster_files, key=lambda f: os.path.getmtime(os.path.join(save_folder, f)))
-    latest_roster_df = pd.read_csv(os.path.join(save_folder, latest_roster))
-    st.success(f"Prefilling from last roster: {latest_roster}")
-else:
-    st.warning("No previous roster found, starting empty.")
-
-# -------------------
-# Always show latest JPG
-# -------------------
-jpg_files = [f for f in os.listdir(save_folder) if f.endswith(".jpg")]
-if jpg_files:
-    latest_jpg = max(jpg_files, key=lambda f: os.path.getmtime(os.path.join(save_folder, f)))
-    st.image(os.path.join(save_folder, latest_jpg), caption=f"Latest roster image ({latest_jpg})", use_container_width=True)
-else:
-    st.warning("No roster images found yet.")
-
-# -------------------
-# Build interactive editor
-# -------------------
-st.header("Roster Editor")
-
-def colored_selectbox(label, options, index=0):
-    # Determine color based on selection
-    color = "#d0f0c0" if options[index] != "None" else "#ffffff"  # light green if selected
-    container = f"""
-    <div style="background-color: {color}; padding:2px; border-radius:4px">
-        {st.selectbox(label, options, index=index, key=label)}
-    </div>
+def generate_employee_ics(roster_data, employee_name):
     """
-    st.markdown(container, unsafe_allow_html=True)
+    Generate an ICS calendar file for the specified employee.
+    roster_data: list of [day, hour, emp1, emp2, act1, emp3, emp4, act2]
+    """
+    c = Calendar()
 
+    for row in roster_data:
+        day, hour, emp1, emp2, act1, emp3, emp4, act2 = row
 
-roster_data = []
-for day in days:
-    st.subheader(day)
-    for hour in shift_hours:
-        cols = st.columns([1, 2, 2, 2, 2, 2, 2])
-        cols[0].write(hour)
+        # Determine if the employee is scheduled in this shift
+        emp_activity_pairs = [(emp1, act1), (emp2, act1), (emp3, act2), (emp4, act2)]
+        for emp, act in emp_activity_pairs:
+            if emp == employee_name and act != "None":
+                # Parse day and hour
+                start_dt = datetime.strptime(f"{day} {hour}", "%Y-%m-%d %H:%M")
+                end_dt = start_dt + timedelta(hours=1)  # assuming 1 hour shifts
 
-        available_emps = availability_map.get(day, {}).get(hour, [])
-        prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
+                e = Event()
+                e.name = f"Shift: {act}"
+                e.begin = start_dt
+                e.end = end_dt
+                c.events.add(e)
 
-        # Prefill activities from last roster
-        activity1_value, activity2_value = "None", "None"
-        if latest_roster_df is not None:
-            row = latest_roster_df[(latest_roster_df['Day'] == day) & (latest_roster_df['Hour'] == hour)]
-            if not row.empty:
-                activity1_value = row['Activity1'].values[0]
-                activity2_value = row['Activity2'].values[0]
+    return c
+def send_schedule_notification():
+    """Send a Mattermost message announcing a new schedule."""
+    message_text = f"A new weekly schedule is available! Check it here: {SCHEDULE_WEBPAGE_URL}"
+    payload = {
+        "channel_id": CHANNEL_ID,
+        "text": message_text
+    }
+    response = requests.post(WEBHOOK_URL, json=payload)
+    if response.status_code == 200:
+        st.success("Message sent successfully!")
+    else:
+        st.error(f"Failed to send message: {response.status_code} {response.text}")
+def save_uploaded_csv(uploaded_file, folder):
+    """Save uploaded CSV to folder with timestamped name."""
+    date_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    save_path = os.path.join(folder, f"uploaded_{date_str}.csv")
+    with open(save_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"Uploaded CSV saved to {save_path}")
+    return save_path
 
-        emp1 = cols[1].selectbox("Emp1", ["None"] + employees, index=(["None"]+employees).index(prefill[0]), key=f"{day}_{hour}_emp1")
-        emp2 = cols[2].selectbox("Emp2", ["None"] + employees, index=(["None"]+employees).index(prefill[1]), key=f"{day}_{hour}_emp2")
-        emp3 = cols[3].selectbox("Emp3", ["None"] + employees, index=(["None"]+employees).index(prefill[2]), key=f"{day}_{hour}_emp3")
-        emp4 = cols[4].selectbox("Emp4", ["None"] + employees, index=(["None"]+employees).index(prefill[3]), key=f"{day}_{hour}_emp4")
+def get_newest_csv(folder):
+    """Return path to the newest CSV in a folder."""
+    csv_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    if not csv_files:
+        st.error(f"No CSV files found in {folder}.")
+        st.stop()
+    newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+    return os.path.join(folder, newest_csv)
 
-        act1 = cols[5].selectbox("Act1", activities, index=activities.index(activity1_value), key=f"{day}_{hour}_act1")
-        act2 = cols[6].selectbox("Act2", activities, index=activities.index(activity2_value), key=f"{day}_{hour}_act2")
+def upload_and_reload_csv(folder):
+    """Handle file upload and reload the latest CSV."""
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+    if uploaded_file is not None:
+        save_uploaded_csv(uploaded_file, folder)
+        newest_csv = get_newest_csv(folder)
+        st.info(f"Re-evaluating newest CSV: {newest_csv}")
+        df = pd.read_csv(newest_csv)
+        return df
+    return None
 
-        roster_data.append([day, hour, emp1, emp2, act1, emp3, emp4, act2])
+def load_newest_csv(folder: str):
+    csv_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    if not csv_files:
+        st.error(f"No CSV files found in {folder}.")
+        st.stop()
+    newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+    st.info(f"Using newest CSV: {os.path.join(folder, newest_csv)}")
+    return pd.read_csv(os.path.join(folder, newest_csv))
 
-# -------------------
-# Save & Plot
-# -------------------
-def save_and_plot():
+def get_last_roster(folder: str):
+    roster_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    if roster_files:
+        latest_roster = max(roster_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+        st.success(f"Prefilling from last roster: {latest_roster}")
+        return pd.read_csv(os.path.join(folder, latest_roster))
+    st.warning("No previous roster found, starting empty.")
+    return None
+
+def show_latest_image(folder: str):
+    jpg_files = [f for f in os.listdir(folder) if f.endswith(".jpg")]
+    if jpg_files:
+        latest_jpg = max(jpg_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+        st.image(os.path.join(folder, latest_jpg), caption=f"Latest roster image ({latest_jpg})", use_container_width=True)
+    else:
+        st.warning("No roster images found yet.")
+
+def map_availability(df):
+    availability_map = {day:{} for day in df['Day'].unique()}
+    for _, row in df.iterrows():
+        if str(row['Availability']).strip().lower() == "available":
+            availability_map[row['Day']].setdefault(row['Hour'], []).append(row['Name'])
+    return availability_map
+def build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df):
+    roster_data = []
+    st.header("Roster Editor")
+
+    def colored_selectbox(label, options, selected_value, key):
+        """Returns a selectbox with a colored background if value is not 'None'."""
+        index = options.index(selected_value)
+        # Light green if selected, white if 'None'
+        color = "#d0f0c0" if selected_value != "None" else "#ffffff"
+        container = f"""
+        <div style="background-color: {color}; padding:2px; border-radius:4px">
+            {st.selectbox(label, options, index=index, key=key)}
+        </div>
+        """
+        return st.markdown(container, unsafe_allow_html=True)
+
+    for day in days:
+        # Add day of the week next to the date
+        try:
+            day_dt = datetime.strptime(day, "%Y-%m-%d")  # adjust format if different
+            weekday = day_dt.strftime("%A")
+            day_label = f"{day} ({weekday})"
+        except:
+            day_label = day  # fallback if parsing fails
+
+        st.subheader(day_label)
+
+        for hour in shift_hours:
+            cols = st.columns([1,2,2,2,2,2,2])
+            cols[0].write(hour)
+
+            available_emps = availability_map.get(day, {}).get(hour, [])
+            prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
+
+            # Prefill activities
+            activity1_value, activity2_value = "None", "None"
+            if latest_roster_df is not None:
+                row = latest_roster_df[(latest_roster_df['Day'] == day) & (latest_roster_df['Hour'] == hour)]
+                if not row.empty:
+                    activity1_value = row['Activity1'].values[0]
+                    activity2_value = row['Activity2'].values[0]
+
+            # Use colored selectboxes
+            emp1 = cols[1].selectbox("Emp1", ["None"]+employees, index=(["None"]+employees).index(prefill[0]), key=f"{day}_{hour}_emp1")
+            emp2 = cols[2].selectbox("Emp2", ["None"]+employees, index=(["None"]+employees).index(prefill[1]), key=f"{day}_{hour}_emp2")
+            emp3 = cols[3].selectbox("Emp3", ["None"]+employees, index=(["None"]+employees).index(prefill[2]), key=f"{day}_{hour}_emp3")
+            emp4 = cols[4].selectbox("Emp4", ["None"]+employees, index=(["None"]+employees).index(prefill[3]), key=f"{day}_{hour}_emp4")
+
+            act1 = cols[5].selectbox("Act1", activities, index=activities.index(activity1_value), key=f"{day}_{hour}_act1")
+            act2 = cols[6].selectbox("Act2", activities, index=activities.index(activity2_value), key=f"{day}_{hour}_act2")
+
+            # Highlight selected values
+            for col, val, k in zip(cols[1:], [emp1, emp2, emp3, emp4, act1, act2],
+                                   [f"{day}_{hour}_emp1", f"{day}_{hour}_emp2", f"{day}_{hour}_emp3", f"{day}_{hour}_emp4",
+                                    f"{day}_{hour}_act1", f"{day}_{hour}_act2"]):
+                if val != "None":
+                    col.markdown(f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px">{val}</div>', unsafe_allow_html=True)
+
+            roster_data.append([day, hour, emp1, emp2, act1, emp3, emp4, act2])
+
+    return roster_data
+
+def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, save_folder):
     df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Employee1", "Employee2", "Activity1",
                                             "Employee3", "Employee4", "Activity2"])
     date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
     csv_path = os.path.join(save_folder, f"roster_{date_str}.csv")
     df.to_csv(csv_path, index=False)
 
-    # Plot
     fig, ax = plt.subplots(figsize=(12,6))
     bar_width = 0.5
     day_positions = range(len(days))
@@ -147,6 +258,16 @@ def save_and_plot():
     ax.set_title("Weekly Schedule")
     ax.grid(True, axis='y', linestyle='--', alpha=0.5)
 
+    # Invert y-axis
+    ax.invert_yaxis()
+
+    # Only show initial and final hours
+    start_hour = int(shift_hours[0].split(":")[0])
+    end_hour = int(shift_hours[-1].split(":")[0])
+    ax.set_yticks([start_hour, end_hour])
+    ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
+
+    # Legend
     emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
                    for act,color in activity_colors_dict.items() if act!="None"]
@@ -156,8 +277,91 @@ def save_and_plot():
     img_path = os.path.join(save_folder, f"roster_{date_str}.jpg")
     plt.savefig(img_path, dpi=300)
     st.pyplot(fig)
-
     st.success(f"Roster saved to {csv_path} and {img_path}")
 
-if st.button("💾 Save Roster & Generate Plot"):
-    save_and_plot()
+# -------------------
+# MAIN
+# -------------------
+# -------------------
+# PASSWORD PROTECTION
+# -------------------
+
+
+availability_df = load_newest_csv(NEWDLE_FOLDER)
+employees = sorted(availability_df['Name'].unique())
+days = sorted(availability_df['Day'].unique())
+shift_hours = sorted(availability_df['Hour'].unique())
+
+# Colors
+colors = plt.cm.tab10.colors
+employee_colors = {emp: colors[i % len(colors)] for i, emp in enumerate(employees)}
+activity_colors = plt.cm.Set2.colors
+activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray"
+                        for i, act in enumerate(activities)}
+
+availability_map = map_availability(availability_df)
+latest_roster_df = get_last_roster(SAVE_FOLDER)
+show_latest_image(SAVE_FOLDER)
+
+# -------------------
+# Streamlit ICS download section
+# -------------------
+latest_csv = get_latest_roster_csv(SAVE_FOLDER)
+if latest_csv is None:
+    st.warning("No roster CSVs found to generate ICS.")
+else:
+    df = pd.read_csv(latest_csv)
+    employees = sorted(set(df['Employee1']).union(df['Employee2'], df['Employee3'], df['Employee4']))
+    employee_selected = st.selectbox("Select your name", ["None"] + employees)
+    
+    if employee_selected != "None":
+        calendar = generate_employee_ics_from_csv(latest_csv, employee_selected)
+        st.download_button(
+            label=f"Download ICS for {employee_selected}",
+            data=str(calendar),
+            file_name=f"{employee_selected}_shifts.ics",
+            mime="text/calendar"
+        )
+
+roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
+
+# -------------------
+# PASSWORD PROTECTION
+# -------------------
+PASSWORD = "mypassword123"  # Replace with your desired password
+
+st.subheader("Enter Password to Enable Actions")
+entered_password = st.text_input("Password", type="password")
+safe_password = html.escape(entered_password)  # Extra safety if ever rendered
+    
+if safe_password == PASSWORD:
+    st.subheader("Actions")
+
+    # Row of first three buttons
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("📤 Upload & Reload CSV"):
+            new_df = upload_and_reload_csv(SAVE_FOLDER)
+            if new_df is not None:
+                availability_df = new_df
+                st.success("Data reloaded from uploaded CSV.")
+                st.experimental_rerun()
+            else:
+                st.warning("Please select a CSV file to upload.")
+
+    with col2:
+        if st.button("🖼️ Update Image"):
+            show_latest_image(SAVE_FOLDER)
+
+    with col3:
+        if st.button("📢 Send Notification"):
+            send_schedule_notification()
+
+    # Separate row for Save & Plot button
+    st.subheader("Save & Generate Plot")
+    if st.button("💾 Save Roster & Generate Plot"):
+        save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
+
+else:
+    st.warning("Enter the correct password to enable actions.")
