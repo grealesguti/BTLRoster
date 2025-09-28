@@ -9,6 +9,9 @@ from datetime import datetime
 from ics import Calendar, Event
 from datetime import datetime, timedelta
 import streamlit as st
+import requests
+import streamlit as st
+from urllib.parse import urlparse
 
 
 # -------------------
@@ -16,6 +19,8 @@ import streamlit as st
 # -------------------
 NEWDLE_FOLDER = "Newdles"
 SAVE_FOLDER = "weekly_rosters"
+AVAILABILITY_FOLDER = "availability_extracted"
+
 os.makedirs(SAVE_FOLDER, exist_ok=True)
 
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
@@ -27,7 +32,79 @@ activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Glui
 # -------------------
 # Utility functions
 # -------------------
+def get_newdle_title(link: str) -> str:
+    """Fetch the Newdle title using the exact URL provided."""
+    if not link.strip():
+        return ""
+    try:
+        # Only process CERN Newdle links
+        parsed = urlparse(link)
+        if "newdle.cern.ch" not in parsed.netloc:
+            return "External link"
+        
+        # Extract the code: last segment if not 'summary'
+        path_parts = parsed.path.strip("/").split("/")
+        code = path_parts[-1] if path_parts[-1] != "summary" else path_parts[-2]
 
+        api_url = f"https://newdle.cern.ch/api/newdle/{code}"
+        resp = requests.get(api_url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("title", "Untitled Newdle")
+    except Exception as e:
+        print(f"Error fetching title for {link}: {e}")
+        return "Unavailable"
+
+
+
+def extract_newdle_availability(newdle_folder="Newdles", save_folder="availability_extracted"):
+    """
+    Extracts availability data from the latest Newdle CSV, saves it to a new folder with a timestamped filename,
+    and returns the extracted DataFrame.
+    """
+    # Ensure save folder exists
+    os.makedirs(save_folder, exist_ok=True)
+
+    # Find all CSV files in the Newdle folder
+    csv_files = glob(os.path.join(newdle_folder, "*.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in folder '{newdle_folder}'")
+
+    # Get the newest CSV by modification time
+    newest_csv = max(csv_files, key=os.path.getmtime)
+    print(f"Using newest CSV: {newest_csv}")
+
+    # Load CSV
+    df = pd.read_csv(newest_csv)
+
+    # Identify time slot columns
+    time_slots = [col for col in df.columns if col not in ['Participant name', 'Comment']]
+
+    # Extract availability
+    rows = []
+    for _, row in df.iterrows():
+        name = row['Participant name']
+        for ts in time_slots:
+            try:
+                day, hour = ts.split("T")
+            except ValueError:
+                # Skip malformed columns
+                continue
+            availability = str(row[ts]).strip().lower()
+            if availability not in ['available', 'unavailable']:
+                availability = 'unavailable'  # treat empty or other values as unavailable
+            rows.append([day, hour, name, availability])
+
+    # Convert to DataFrame
+    availability_df = pd.DataFrame(rows, columns=['Day', 'Hour', 'Name', 'Availability'])
+
+    # Save CSV with date in filename
+    date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
+    output_file = os.path.join(save_folder, f"availability_{date_str}.csv")
+    availability_df.to_csv(output_file, index=False)
+
+    print(f"Availability extracted and saved to {output_file}")
+    return availability_df
 
 def load_latest_newdle_csv():
     csv_files = [f for f in os.listdir(NEWDLE_FOLDER) if f.endswith(".csv")]
@@ -283,8 +360,31 @@ def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colo
 # MAIN
 # -------------------
 # -------------------
-# PASSWORD PROTECTION
+# Default links
 # -------------------
+default_links = [
+    "https://newdle.cern.ch/newdle/w5NzNRKR",
+    "https://example.com/newdle2",
+    "",  # placeholders for up to 4
+    ""
+]
+
+# Store links in session state
+if "newdle_links" not in st.session_state:
+    st.session_state["newdle_links"] = default_links.copy()
+
+# -------------------
+# Display links horizontally
+# -------------------
+st.markdown("### Next Newdles:")
+
+cols = st.columns(4)
+for i, (col, link) in enumerate(zip(cols, st.session_state["newdle_links"])):
+    if link.strip():
+        title = get_newdle_title(link)
+        col.markdown(f"[{title}]({link})")
+
+st.markdown("### Current Schedule:")
 
 
 availability_df = load_newest_csv(NEWDLE_FOLDER)
@@ -323,12 +423,9 @@ else:
             mime="text/calendar"
         )
 
-roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
-
 # -------------------
 # PASSWORD PROTECTION
 # -------------------
-PASSWORD = "mypassword123"  # Replace with your desired password
 
 st.subheader("Enter Password to Enable Actions")
 entered_password = st.text_input("Password", type="password")
@@ -336,6 +433,8 @@ safe_password = html.escape(entered_password)  # Extra safety if ever rendered
     
 if safe_password == PASSWORD:
     st.subheader("Actions")
+        
+    roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
 
     # Row of first three buttons
     col1, col2, col3 = st.columns(3)
@@ -358,6 +457,19 @@ if safe_password == PASSWORD:
         if st.button("📢 Send Notification"):
             send_schedule_notification()
 
+            
+    st.markdown("### Update Next Newdle Links (up to 4)")
+    for i in range(4):
+        new_link = st.text_input(
+            f"Link {i+1}",
+            value=st.session_state["newdle_links"][i],
+            key=f"link_input_{i}"
+        )
+        st.session_state["newdle_links"][i] = new_link.strip()
+
+    if st.button("💾 Save Links"):
+        st.success("Newdle links updated!")
+            
     # Separate row for Save & Plot button
     st.subheader("Save & Generate Plot")
     if st.button("💾 Save Roster & Generate Plot"):
