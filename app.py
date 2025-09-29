@@ -609,7 +609,7 @@ activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act !=
                         for i, act in enumerate(activities)}
 
 availability_map = map_availability(availability_df)
-latest_roster_df = get_last_roster(AVAILABILITY_FOLDER)
+latest_roster_df = get_last_roster(SAVE_FOLDER)
 
 
 # -------------------
