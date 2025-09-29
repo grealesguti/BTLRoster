@@ -19,9 +19,10 @@ from urllib.parse import urlparse
 # -------------------
 NEWDLE_FOLDER = "Newdles"
 SAVE_FOLDER = "weekly_rosters"
-AVAILABILITY_FOLDER = "availability_extracted"
+AVAILABILITY_FOLDER = "Availability"
 
 os.makedirs(SAVE_FOLDER, exist_ok=True)
+os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
@@ -32,6 +33,98 @@ activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Glui
 # -------------------
 # Utility functions
 # -------------------
+def select_old_csv(save_folder):
+    # List all CSV files
+    csv_files = [f for f in os.listdir(save_folder) if f.endswith(".csv")]
+    if not csv_files:
+        st.warning("No previous roster CSVs found.")
+        return None
+
+    csv_files.sort(reverse=True)  # show latest first
+    # Dropdown selectbox
+    selected_csv = st.selectbox("Select a previous roster CSV", csv_files)
+    df = pd.read_csv(os.path.join(save_folder, selected_csv))
+    st.info(f"Loaded CSV: {selected_csv}")
+    return df
+def select_old_jpg(save_folder):
+    jpg_files = [f for f in os.listdir(save_folder) if f.endswith(".jpg")]
+    if not jpg_files:
+        st.warning("No previous roster images found.")
+        return None
+
+    jpg_files.sort(reverse=True)
+    selected_jpg = st.selectbox("Select a previous roster image", jpg_files)
+    st.image(os.path.join(save_folder, selected_jpg), caption=f"Roster image: {selected_jpg}", use_container_width=True)
+    return selected_jpg
+
+
+def save_csv_file(uploaded_file, folder):
+    """Save uploaded CSV to folder."""
+    path = os.path.join(folder, uploaded_file.name)
+    with open(path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return path
+
+def get_latest_csv(folder):
+    """Return the newest CSV file in a folder."""
+    csv_files = glob(os.path.join(folder, "*.csv"))
+    if not csv_files:
+        return None
+    return max(csv_files, key=os.path.getmtime)
+
+def upload_and_process_newdle_csv():
+    """Upload a CSV and process it into availability format."""
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+    if uploaded_file is not None:
+        saved_path = save_csv_file(uploaded_file, SAVE_FOLDER)
+        st.success(f"Uploaded {uploaded_file.name}")
+
+        # Process CSV into availability format
+        df = pd.read_csv(saved_path)
+        time_slots = [col for col in df.columns if col not in ["Participant name", "Comment"]]
+        rows = []
+        for _, row in df.iterrows():
+            name = row["Participant name"]
+            for ts in time_slots:
+                day, hour = ts.split("T")
+                availability = str(row[ts]).strip().lower()
+                if availability not in ["available", "unavailable"]:
+                    availability = "unavailable"
+                rows.append([day, hour, name, availability])
+
+        availability_df = pd.DataFrame(rows, columns=["Day", "Hour", "Name", "Availability"])
+        
+        # Save processed availability
+        avail_path = os.path.join(AVAILABILITY_FOLDER, "availability_extracted.csv")
+        availability_df.to_csv(avail_path, index=False)
+        st.info(f"Processed availability saved to {avail_path}")
+        return availability_df
+    return None
+
+# -------------------
+# Load the latest availability
+# -------------------
+def load_latest_availability_csv(folder: str):
+    """Load the newest CSV in the availability folder."""
+    csv_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    if not csv_files:
+        st.error(f"No CSV files found in {folder}.")
+        st.stop()
+    newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+    st.info(f"Using newest CSV: {os.path.join(folder, newest_csv)}")
+    return pd.read_csv(os.path.join(folder, newest_csv))
+
+# -------------------
+# Map availability
+# -------------------
+def create_availability_map(df):
+    """Convert availability DataFrame into a dictionary for roster prefill."""
+    availability_map = {day:{} for day in df['Day'].unique()}
+    for _, row in df.iterrows():
+        if str(row['Availability']).strip().lower() == "available":
+            availability_map[row['Day']].setdefault(row['Hour'], []).append(row['Name'])
+    return availability_map
+
 def get_newdle_title(link: str) -> str:
     """Fetch the Newdle title using the exact URL provided."""
     if not link.strip():
@@ -198,16 +291,7 @@ def get_newest_csv(folder):
     newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
     return os.path.join(folder, newest_csv)
 
-def upload_and_reload_csv(folder):
-    """Handle file upload and reload the latest CSV."""
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-    if uploaded_file is not None:
-        save_uploaded_csv(uploaded_file, folder)
-        newest_csv = get_newest_csv(folder)
-        st.info(f"Re-evaluating newest CSV: {newest_csv}")
-        df = pd.read_csv(newest_csv)
-        return df
-    return None
+
 
 def load_newest_csv(folder: str):
     csv_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
@@ -355,6 +439,104 @@ def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colo
     plt.savefig(img_path, dpi=300)
     st.pyplot(fig)
     st.success(f"Roster saved to {csv_path} and {img_path}")
+    
+# -------------------
+# Function to preview roster image (does not save)
+# -------------------
+def preview_roster_image(df, days, shift_hours, employee_colors, activity_colors_dict):
+    fig, ax = plt.subplots(figsize=(12,6))
+    bar_width = 0.5
+    day_positions = range(len(days))
+
+    for day_idx, day in enumerate(days):
+        for hour_idx, hour in enumerate(shift_hours):
+            row = df[(df["Day"]==day) & (df["Hour"]==hour)].iloc[0]
+            start_hour = int(hour.split(":")[0])
+            height = 0.3
+
+            for i, (emp, act) in enumerate([(row.Employee1, row.Activity1),
+                                            (row.Employee2, row.Activity1),
+                                            (row.Employee3, row.Activity2),
+                                            (row.Employee4, row.Activity2)]):
+                ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
+                       color=employee_colors.get(emp,'gray'))
+                ax.text(day_idx, start_hour + (i+0.5)*height, f"{emp}\n{act}", ha='center', va='center',
+                        color='black' if emp=="None" else 'white', fontsize=7)
+
+    ax.set_xticks(list(day_positions))
+    ax.set_xticklabels(days)
+    ax.set_ylabel("Hour")
+    ax.set_title("Weekly Schedule")
+    ax.grid(True, axis='y', linestyle='--', alpha=0.5)
+    ax.invert_yaxis()
+
+    # Only show first and last hours
+    start_hour = int(shift_hours[0].split(":")[0])
+    end_hour = int(shift_hours[-1].split(":")[0])
+    ax.set_yticks([start_hour, end_hour])
+    ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
+
+    # Legend
+    emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
+    act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
+                   for act,color in activity_colors_dict.items() if act!="None"]
+    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+
+    plt.tight_layout()
+    st.pyplot(fig)
+
+# -------------------
+# Function to save roster CSV and image
+# -------------------
+def save_roster(df, days, shift_hours, employee_colors, activity_colors_dict, save_folder):
+    # Save CSV
+    date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
+    csv_path = os.path.join(save_folder, f"roster_{date_str}.csv")
+    df.to_csv(csv_path, index=False)
+
+    # Save image
+    fig, ax = plt.subplots(figsize=(12,6))
+    bar_width = 0.5
+    day_positions = range(len(days))
+
+    for day_idx, day in enumerate(days):
+        for hour_idx, hour in enumerate(shift_hours):
+            row = df[(df["Day"]==day) & (df["Hour"]==hour)].iloc[0]
+            start_hour = int(hour.split(":")[0])
+            height = 0.3
+            for i, (emp, act) in enumerate([(row.Employee1, row.Activity1),
+                                            (row.Employee2, row.Activity1),
+                                            (row.Employee3, row.Activity2),
+                                            (row.Employee4, row.Activity2)]):
+                ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
+                       color=employee_colors.get(emp,'gray'))
+                ax.text(day_idx, start_hour + (i+0.5)*height, f"{emp}\n{act}", ha='center', va='center',
+                        color='black' if emp=="None" else 'white', fontsize=7)
+
+    ax.set_xticks(list(day_positions))
+    ax.set_xticklabels(days)
+    ax.set_ylabel("Hour")
+    ax.set_title("Weekly Schedule")
+    ax.grid(True, axis='y', linestyle='--', alpha=0.5)
+    ax.invert_yaxis()
+
+    # Only show first and last hours
+    start_hour = int(shift_hours[0].split(":")[0])
+    end_hour = int(shift_hours[-1].split(":")[0])
+    ax.set_yticks([start_hour, end_hour])
+    ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
+
+    # Legend
+    emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
+    act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
+                   for act,color in activity_colors_dict.items() if act!="None"]
+    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+
+    plt.tight_layout()
+    img_path = os.path.join(save_folder, f"roster_{date_str}.jpg")
+    plt.savefig(img_path, dpi=300)
+    st.success(f"Roster saved to {csv_path} and {img_path}")
+
 
 # -------------------
 # MAIN
@@ -377,16 +559,41 @@ if "newdle_links" not in st.session_state:
 # Display links horizontally
 # -------------------
 st.markdown("### Next Newdles:")
-
 cols = st.columns(4)
 for i, (col, link) in enumerate(zip(cols, st.session_state["newdle_links"])):
     if link.strip():
         title = get_newdle_title(link)
         col.markdown(f"[{title}]({link})")
 
-st.markdown("### Current Schedule:")
+st.markdown("### Roster Image")
 
+# Get all saved roster images
+jpg_files = [f for f in os.listdir(SAVE_FOLDER) if f.endswith(".jpg")]
+jpg_files.sort(reverse=True)  # latest first
 
+# Add a dropdown to select old images
+selected_jpg = st.selectbox(
+    "Select a roster image (latest first)",
+    ["LATEST"] + jpg_files  # "LATEST" will be the most recent image
+)
+
+# Button to force refresh to latest image
+if st.button("🖼️ Refresh Latest"):
+    selected_jpg = "LATEST"
+
+# Determine which image to show
+if selected_jpg == "LATEST":
+    if jpg_files:
+        latest_jpg_path = os.path.join(SAVE_FOLDER, jpg_files[0])
+        st.image(latest_jpg_path, caption=f"Latest roster image ({jpg_files[0]})", use_container_width=True)
+    else:
+        st.warning("No roster images found yet.")
+else:
+    st.image(os.path.join(SAVE_FOLDER, selected_jpg), caption=f"Roster image ({selected_jpg})", use_container_width=True)
+
+# -------------------
+# Load availability and roster data
+# -------------------
 availability_df = load_newest_csv(NEWDLE_FOLDER)
 employees = sorted(availability_df['Name'].unique())
 days = sorted(availability_df['Day'].unique())
@@ -401,7 +608,7 @@ activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act !=
 
 availability_map = map_availability(availability_df)
 latest_roster_df = get_last_roster(SAVE_FOLDER)
-show_latest_image(SAVE_FOLDER)
+
 
 # -------------------
 # Streamlit ICS download section
@@ -427,27 +634,23 @@ else:
 # PASSWORD PROTECTION
 # -------------------
 
-st.subheader("Enter Password to Enable Actions")
+st.subheader("Enter Password to Enable Editor & Actions")
 entered_password = st.text_input("Password", type="password")
 safe_password = html.escape(entered_password)  # Extra safety if ever rendered
     
 if safe_password == PASSWORD:
-    st.subheader("Actions")
+    
         
     roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
-
+    st.subheader("Actions")
     # Row of first three buttons
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("📤 Upload & Reload CSV"):
-            new_df = upload_and_reload_csv(SAVE_FOLDER)
-            if new_df is not None:
-                availability_df = new_df
-                st.success("Data reloaded from uploaded CSV.")
+        if st.button("📤 Upload & Process CSV"):
+            availability_df = upload_and_process_newdle_csv()
+            if availability_df is not None:
                 st.experimental_rerun()
-            else:
-                st.warning("Please select a CSV file to upload.")
 
     with col2:
         if st.button("🖼️ Update Image"):
@@ -470,10 +673,12 @@ if safe_password == PASSWORD:
     if st.button("💾 Save Links"):
         st.success("Newdle links updated!")
             
-    # Separate row for Save & Plot button
-    st.subheader("Save & Generate Plot")
-    if st.button("💾 Save Roster & Generate Plot"):
-        save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
+
+    if st.button("🖼️ Show / Preview Roster"):
+        preview_roster_image(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict)
+
+    if st.button("💾 Save Roster (CSV & JPG)"):
+        save_roster(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
 
 else:
     st.warning("Enter the correct password to enable actions.")
