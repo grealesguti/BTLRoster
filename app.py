@@ -12,6 +12,7 @@ import streamlit as st
 import requests
 import streamlit as st
 from urllib.parse import urlparse
+import glob
 
 
 # -------------------
@@ -29,7 +30,7 @@ os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
 SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
-PASSWORD = "mypassword123"  # Replace with your desired password
+PASSWORD = "123"  # Replace with your desired password
 activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Gluing", "Beam Precal.", "Grounding Strips"]
 
 # -------------------
@@ -74,11 +75,10 @@ def save_csv_file(uploaded_file, folder):
     return path
 
 def get_latest_csv(folder):
-    """Return the newest CSV file in a folder."""
-    csv_files = glob(os.path.join(folder, "*.csv"))
-    if not csv_files:
-        return None
-    return max(csv_files, key=os.path.getmtime)
+    csv_files = glob.glob(os.path.join(folder, "*.csv"))  # ✅ use glob.glob
+    if csv_files:
+        return max(csv_files, key=os.path.getmtime)
+    return None
 
 def upload_and_process_newdle_csv():
     """Upload a CSV and process it into availability format."""
@@ -379,111 +379,122 @@ def map_availability(df: pd.DataFrame) -> dict:
 # -------------------
 # Build Roster Editor
 # -------------------
-
-def build_roster_editor(days, shift_hours, availability_df, latest_roster_df, activities):
+def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY_FOLDER):
     """
-    Build a roster editor in Streamlit with selectboxes for employees and activities.
-    Fully robust: missing columns or NaN values are treated as 'None'.
+    Streamlit roster editor:
+    - Default: all fields "None"
+    - Two buttons to prefill from last roster or availability
+    - Dropdowns to select older CSVs
+    - Highlights non-"None" names/activities in light green
     """
     st.header("Roster Editor")
 
-    # --- Employees: merge availability + last roster safely ---
-    try:
-        availability_employees = sorted(availability_df['Name'].dropna().unique())
-    except Exception:
-        availability_employees = []
+    # --- Initialize roster_data ---
+    if "roster_data" not in st.session_state:
+        st.session_state["roster_data"] = [
+            {"Day": day, "Hour": hour,
+             "Emp1": "None", "Emp2": "None", "Act1": "None",
+             "Emp3": "None", "Emp4": "None", "Act2": "None"}
+            for day in days for hour in shift_hours
+        ]
 
-    roster_employees = []
-    if latest_roster_df is not None:
-        # Normalize columns
-        latest_roster_df.columns = latest_roster_df.columns.str.strip()
-        emp_cols = [c for c in ['Emp1','Emp2','Emp3','Emp4'] if c in latest_roster_df.columns]
-        if emp_cols:
-            try:
-                roster_employees_raw = latest_roster_df[emp_cols].values.ravel()
-                roster_employees = [str(e) for e in roster_employees_raw if pd.notna(e) and e != "None"]
-            except Exception:
-                roster_employees = []
+    # --- Prefill buttons and dropdowns ---
+    col1, col2 = st.columns(2)
 
-    employees = sorted(set(availability_employees) | set(roster_employees))
+    # --- Roster CSV dropdown ---
+    roster_files = [f for f in os.listdir(SAVE_FOLDER) if f.endswith(".csv")]
+    roster_files.sort(reverse=True)
+    selected_roster_csv = st.selectbox("Select roster CSV to prefill", ["LATEST"] + roster_files)
+
+    with col1:
+        if st.button("📄 Prefill from Selected Roster"):
+            if selected_roster_csv == "LATEST" and roster_files:
+                csv_path = os.path.join(SAVE_FOLDER, roster_files[0])
+            elif selected_roster_csv != "LATEST":
+                csv_path = os.path.join(SAVE_FOLDER, selected_roster_csv)
+            else:
+                csv_path = None
+
+            if csv_path:
+                latest_roster_df = pd.read_csv(csv_path, dtype=str).fillna("None")
+                for row in st.session_state["roster_data"]:
+                    day = row["Day"]
+                    hour = row["Hour"]
+                    match = latest_roster_df[
+                        (latest_roster_df.get("Day","") == day) &
+                        (latest_roster_df.get("Hour","") == hour)
+                    ]
+                    if not match.empty:
+                        row["Emp1"] = match.iloc[0].get("Emp1","None") or "None"
+                        row["Emp2"] = match.iloc[0].get("Emp2","None") or "None"
+                        row["Emp3"] = match.iloc[0].get("Emp3","None") or "None"
+                        row["Emp4"] = match.iloc[0].get("Emp4","None") or "None"
+                        row["Act1"] = match.iloc[0].get("Act1","None") or "None"
+                        row["Act2"] = match.iloc[0].get("Act2","None") or "None"
+            st.session_state["prefill_trigger"] = not st.session_state.get("prefill_trigger", False)
+
+    # --- Availability CSV dropdown ---
+    avail_files = [f for f in os.listdir(AVAILABILITY_FOLDER) if f.endswith(".csv")]
+    avail_files.sort(reverse=True)
+    selected_avail_csv = st.selectbox("Select availability CSV to prefill", ["LATEST"] + avail_files)
+
+    with col2:
+        if st.button("📅 Prefill from Selected Availability"):
+            if selected_avail_csv == "LATEST" and avail_files:
+                csv_path = os.path.join(AVAILABILITY_FOLDER, avail_files[0])
+            elif selected_avail_csv != "LATEST":
+                csv_path = os.path.join(AVAILABILITY_FOLDER, selected_avail_csv)
+            else:
+                csv_path = None
+
+            if csv_path:
+                availability_df = pd.read_csv(csv_path, dtype=str).fillna("None")
+                for row in st.session_state["roster_data"]:
+                    day = row["Day"]
+                    hour = row["Hour"]
+                    available_emps = availability_df[
+                        (availability_df.get("Day","") == day) &
+                        (availability_df.get("Hour","") == hour) &
+                        (availability_df.get("Availability","").str.lower() == "available")
+                    ]["Name"].tolist()
+                    row["Emp1"] = available_emps[0] if len(available_emps) > 0 else "None"
+                    row["Emp2"] = available_emps[1] if len(available_emps) > 1 else "None"
+                    row["Emp3"] = available_emps[2] if len(available_emps) > 2 else "None"
+                    row["Emp4"] = available_emps[3] if len(available_emps) > 3 else "None"
+            st.session_state["prefill_trigger"] = not st.session_state.get("prefill_trigger", False)
+
+    # --- Build editor UI ---
+    employees = sorted(set([r[e] for r in st.session_state["roster_data"] for e in ["Emp1","Emp2","Emp3","Emp4"]]))
     employee_options = ["None"] + employees
 
-    # --- Map availability safely ---
-    availability_map = {day:{} for day in days}
-    if availability_df is not None:
-        for _, row in availability_df.iterrows():
-            try:
-                name = str(row.get('Name','None'))
-                day = str(row.get('Day',''))
-                hour = str(row.get('Hour',''))
-                avail = str(row.get('Availability','None')).strip().lower()
-                if avail == "available":
-                    availability_map.setdefault(day, {}).setdefault(hour, []).append(name)
-            except Exception:
-                continue  # skip any problematic row
-
-    # --- Helper to safely get index ---
-    def safe_index(options, value):
-        try:
-            return options.index(value)
-        except Exception:
-            return 0  # fallback to "None"
-
-    # --- Build editor ---
-    roster_data = []
-
     for day in days:
-        # Display day with weekday
-        try:
-            day_dt = datetime.strptime(day, "%Y-%m-%d")
-            weekday = day_dt.strftime("%A")
-            day_label = f"{day} ({weekday})"
-        except Exception:
-            day_label = day
-        st.subheader(day_label)
-
+        st.subheader(day)
         for hour in shift_hours:
+            row_data = next(r for r in st.session_state["roster_data"] if r["Day"]==day and r["Hour"]==hour)
             cols = st.columns([1,2,2,2,2,2,2])
             cols[0].write(hour)
 
-            # Prefill employees from availability safely
-            available_emps = availability_map.get(day, {}).get(hour, [])
-            prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
-
-            # Prefill activities from last roster safely
-            act1_value, act2_value = "None", "None"
-            if latest_roster_df is not None:
-                try:
-                    row = latest_roster_df[(latest_roster_df.get('Day','')==day) & (latest_roster_df.get('Hour','')==hour)]
-                    if not row.empty:
-                        act1_value = str(row.iloc[0].get('Act1','None') or "None")
-                        act2_value = str(row.iloc[0].get('Act2','None') or "None")
-                except Exception:
-                    act1_value, act2_value = "None", "None"
-
             # Employee selectboxes
-            emp1 = cols[1].selectbox("Emp1", employee_options, index=safe_index(employee_options, prefill[0]), key=f"{day}_{hour}_emp1")
-            emp2 = cols[2].selectbox("Emp2", employee_options, index=safe_index(employee_options, prefill[1]), key=f"{day}_{hour}_emp2")
-            emp3 = cols[3].selectbox("Emp3", employee_options, index=safe_index(employee_options, prefill[2]), key=f"{day}_{hour}_emp3")
-            emp4 = cols[4].selectbox("Emp4", employee_options, index=safe_index(employee_options, prefill[3]), key=f"{day}_{hour}_emp4")
+            row_data["Emp1"] = cols[1].selectbox("Emp1", employee_options, index=employee_options.index(row_data["Emp1"]), key=f"{day}_{hour}_emp1")
+            row_data["Emp2"] = cols[2].selectbox("Emp2", employee_options, index=employee_options.index(row_data["Emp2"]), key=f"{day}_{hour}_emp2")
+            row_data["Emp3"] = cols[3].selectbox("Emp3", employee_options, index=employee_options.index(row_data["Emp3"]), key=f"{day}_{hour}_emp3")
+            row_data["Emp4"] = cols[4].selectbox("Emp4", employee_options, index=employee_options.index(row_data["Emp4"]), key=f"{day}_{hour}_emp4")
 
             # Activity selectboxes
-            act1 = cols[5].selectbox("Act1", activities, index=activities.index(act1_value) if act1_value in activities else 0, key=f"{day}_{hour}_act1")
-            act2 = cols[6].selectbox("Act2", activities, index=activities.index(act2_value) if act2_value in activities else 0, key=f"{day}_{hour}_act2")
+            row_data["Act1"] = cols[5].selectbox("Act1", activities, index=activities.index(row_data["Act1"]) if row_data["Act1"] in activities else 0, key=f"{day}_{hour}_act1")
+            row_data["Act2"] = cols[6].selectbox("Act2", activities, index=activities.index(row_data["Act2"]) if row_data["Act2"] in activities else 0, key=f"{day}_{hour}_act2")
 
-            # Highlight selected values
-            for col, val in zip(cols[1:] + cols[5:], [emp1, emp2, emp3, emp4, act1, act2]):
+            # Highlight non-"None" selections
+            highlight_values = [row_data["Emp1"], row_data["Emp2"], row_data["Emp3"], row_data["Emp4"], row_data["Act1"], row_data["Act2"]]
+            for col, val in zip(cols[1:] + cols[5:], highlight_values):
                 if val != "None":
                     col.markdown(f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px">{val}</div>', unsafe_allow_html=True)
 
-            # Store in roster_data
-            roster_data.append({
-                "Day": day, "Hour": hour,
-                "Emp1": emp1, "Emp2": emp2, "Act1": act1,
-                "Emp3": emp3, "Emp4": emp4, "Act2": act2
-            })
+    return st.session_state["roster_data"]
 
-    return roster_data
+
+
+
 def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, save_folder):
     df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Emp1", "Emp2", "Act1",
                                             "Emp3", "Emp4", "Act2"])
@@ -640,18 +651,17 @@ def save_roster(df, days, shift_hours, employee_colors, activity_colors_dict, sa
     plt.savefig(img_path, dpi=300)
     st.success(f"Roster saved to {csv_path} and {img_path}")
 
-
 # -------------------
 # MAIN
 # -------------------
+
 # -------------------
 # Default links
 # -------------------
 default_links = [
     "https://newdle.cern.ch/newdle/w5NzNRKR",
     "https://example.com/newdle2",
-    "",  # placeholders for up to 4
-    ""
+    "", "",  # placeholders for up to 4
 ]
 
 # Store links in session state
@@ -668,113 +678,94 @@ for i, (col, link) in enumerate(zip(cols, st.session_state["newdle_links"])):
         title = get_newdle_title(link)
         col.markdown(f"[{title}]({link})")
 
+# -------------------
+# Roster Image
+# -------------------
 st.markdown("### Roster Image")
-
-# Get all saved roster images
 jpg_files = [f for f in os.listdir(SAVE_FOLDER) if f.endswith(".jpg")]
-jpg_files.sort(reverse=True)  # latest first
+jpg_files.sort(reverse=True)
+selected_jpg = st.selectbox("Select a roster image (latest first)", ["LATEST"] + jpg_files)
 
-# Add a dropdown to select old images
-selected_jpg = st.selectbox(
-    "Select a roster image (latest first)",
-    ["LATEST"] + jpg_files  # "LATEST" will be the most recent image
-)
-
-# Button to force refresh to latest image
 if st.button("🖼️ Refresh Latest"):
     selected_jpg = "LATEST"
 
-# Determine which image to show
 if selected_jpg == "LATEST":
     if jpg_files:
-        latest_jpg_path = os.path.join(SAVE_FOLDER, jpg_files[0])
-        st.image(latest_jpg_path, caption=f"Latest roster image ({jpg_files[0]})", use_container_width=True)
+        st.image(os.path.join(SAVE_FOLDER, jpg_files[0]), caption=f"Latest roster image ({jpg_files[0]})", use_container_width=True)
     else:
         st.warning("No roster images found yet.")
 else:
     st.image(os.path.join(SAVE_FOLDER, selected_jpg), caption=f"Roster image ({selected_jpg})", use_container_width=True)
 
 # -------------------
-# Load availability and roster data
+# Load availability data (for ICS download)
 # -------------------
 availability_df = load_newest_csv(AVAILABILITY_FOLDER)
 employees = sorted(availability_df['Name'].unique())
 days = sorted(availability_df['Day'].unique())
 shift_hours = sorted(availability_df['Hour'].unique())
-
-# Colors
-colors = plt.cm.tab10.colors
-employee_colors = {emp: colors[i % len(colors)] for i, emp in enumerate(employees)}
-activity_colors = plt.cm.Set2.colors
-activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray"
-                        for i, act in enumerate(activities)}
-
-
-# -------------------
-# Streamlit ICS download section
-# -------------------
 latest_csv = get_latest_roster_csv(SAVE_FOLDER)
-
 df = pd.read_csv(latest_csv)
-employees = extract_employees(df)
-    
-employee_selected = select_employee(employees)
+employee_selected = select_employee(extract_employees(df))
 if employee_selected:
     download_ics(latest_csv, employee_selected)
 
 # -------------------
 # PASSWORD PROTECTION
 # -------------------
-
 st.subheader("Enter Password to Enable Editor & Actions")
 entered_password = st.text_input("Password", type="password")
-safe_password = html.escape(entered_password)  # Extra safety if ever rendered
-    
-if safe_password == PASSWORD:
-    
-    availability_map = map_availability(availability_df)
-    latest_roster_df = get_last_roster(SAVE_FOLDER)
-    roster_data = build_roster_editor(days, shift_hours, availability_df, latest_roster_df, activities)
-    st.subheader("Actions")
-    # Row of first three buttons
-    col1, col2, col3 = st.columns(3)
+safe_password = html.escape(entered_password)
 
+if safe_password == PASSWORD:
+    # -------------------
+    # Roster Editor
+    # -------------------
+    roster_data = build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY_FOLDER)
+
+    # -------------------
+    # Colors for plotting
+    # -------------------
+    colors = plt.cm.tab10.colors
+    employee_list = sorted(set([r[e] for r in roster_data for e in ["Emp1","Emp2","Emp3","Emp4"]]))
+    employee_colors = {emp: colors[i % len(colors)] for i, emp in enumerate(employee_list)}
+    activity_colors = plt.cm.Set2.colors
+    activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray" for i, act in enumerate(activities)}
+
+    # -------------------
+    # Actions
+    # -------------------
+    st.subheader("Actions")
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("📤 Upload & Process CSV"):
             availability_df = upload_and_process_newdle_csv()
             if availability_df is not None:
                 st.experimental_rerun()
-
-    with col2:
-        if st.button("🖼️ Update Image"):
-            show_latest_image(SAVE_FOLDER)
-
+    #with col2:
+    #    if st.button("🖼️ Update Image"):
+    #        show_latest_image(SAVE_FOLDER)
     with col3:
         if st.button("📢 Send Notification"):
             send_schedule_notification()
 
-            
+    # -------------------
+    # Update Next Newdle Links
+    # -------------------
     st.markdown("### Update Next Newdle Links (up to 4)")
     for i in range(4):
-        new_link = st.text_input(
-            f"Link {i+1}",
-            value=st.session_state["newdle_links"][i],
-            key=f"link_input_{i}"
-        )
+        new_link = st.text_input(f"Link {i+1}", value=st.session_state["newdle_links"][i], key=f"link_input_{i}")
         st.session_state["newdle_links"][i] = new_link.strip()
 
     if st.button("💾 Save Links"):
         st.success("Newdle links updated!")
-            
 
+    # -------------------
+    # Save and Plot Roster
+    # -------------------
     if st.button("Save and Plot Roster"):
         save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
-            
-    #if st.button("🖼️ Show / Preview Roster"):
-    #    preview_roster_image(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict)
-
-    #if st.button("💾 Save Roster (CSV & JPG)"):
-    #    save_roster(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
 
 else:
     st.warning("Enter the correct password to enable actions.")
+
