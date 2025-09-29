@@ -18,6 +18,22 @@ from urllib.parse import urlparse
 # CONFIG
 # -------------------
 NEWDLE_FOLDER = "Newdles"
+
+folder = NEWDLE_FOLDER  # NEWDLE_FOLDER
+csv_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+st.write("CSV files found in folder:", csv_files)
+
+if not csv_files:
+    st.warning(f"No CSV files found in {folder}")
+else:
+    newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+    st.write("Newest CSV:", newest_csv)
+    
+    df = pd.read_csv(os.path.join(folder, newest_csv))
+    st.write("Columns in CSV:", df.columns.tolist())
+    st.write(df.head())
+
+
 SAVE_FOLDER = "weekly_rosters"
 AVAILABILITY_FOLDER = "Availability"
 
