@@ -30,7 +30,7 @@ os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
 SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
-PASSWORD = "123"  # Replace with your desired password
+PASSWORD = "mypassword123"  # Replace with your desired password
 activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Gluing", "Beam Precal.", "Grounding Strips"]
 
 # -------------------
