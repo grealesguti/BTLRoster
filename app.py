@@ -30,7 +30,7 @@ os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
 SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
-PASSWORD = "mypassword123"  # Replace with your desired password
+PASSWORD = "123"  # Replace with your desired password
 activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Gluing", "Beam Precal.", "Grounding Strips"]
 
 # -------------------
@@ -515,13 +515,11 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
     return st.session_state["roster_data"]
 
 
-
 def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save_folder):
     """
     Save and plot the roster using the current values from st.session_state.
     Prefilled slots are included.
     """
-    # Always read from session_state
     roster_data = st.session_state.get("roster_data", [])
 
     if not roster_data:
@@ -552,28 +550,36 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
                                             (row.Emp2, row.Act1),
                                             (row.Emp3, row.Act2),
                                             (row.Emp4, row.Act2)]):
+                # Handle None employees
+                if emp is None or emp == "None":
+                    bar_color = "white"
+                    text_color = "black"
+                    display_emp = ""
+                else:
+                    bar_color = employee_colors.get(emp, 'gray')
+                    text_color = 'white'
+                    display_emp = emp
+
                 ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
-                       color=employee_colors.get(emp,'gray'))
-                ax.text(day_idx, start_hour + (i+0.5)*height, f"{emp}\n{act}", ha='center', va='center',
-                        color='black' if emp=="None" else 'white', fontsize=7)
+                       color=bar_color, edgecolor='black')
+                ax.text(day_idx, start_hour + (i+0.5)*height, f"{display_emp}\n{act}", 
+                        ha='center', va='center', color=text_color, fontsize=7)
 
     ax.set_xticks(list(day_positions))
     ax.set_xticklabels(days)
     ax.set_ylabel("Hour")
     ax.set_title("Weekly Schedule")
     ax.grid(True, axis='y', linestyle='--', alpha=0.5)
-
     ax.invert_yaxis()
 
-    # Only show initial and final hours
     start_hour = int(shift_hours[0].split(":")[0])
     end_hour = int(shift_hours[-1].split(":")[0])
     ax.set_yticks([start_hour, end_hour])
     ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
 
-    # Legend
     import matplotlib.patches as mpatches
-    emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
+    emp_patches = [mpatches.Patch(color=color, label=emp) 
+                   for emp,color in employee_colors.items() if emp!="None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
                    for act,color in activity_colors_dict.items() if act!="None"]
     ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
@@ -584,50 +590,76 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
     st.pyplot(fig)
     st.success(f"Roster saved to {csv_path} and {img_path}")
 
+
 # -------------------
 # Function to preview roster image (does not save)
 # -------------------
-def preview_roster_image(df, days, shift_hours, employee_colors, activity_colors_dict):
+def preview_roster(days, shift_hours, employee_colors, activity_colors_dict):
+    """
+    Preview the current roster in a plot using session_state.
+    """
+    roster_data = st.session_state.get("roster_data", [])
+    if not roster_data:
+        st.warning("Roster is empty, nothing to preview.")
+        return
+
+    df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Emp1", "Emp2", "Act1",
+                                            "Emp3", "Emp4", "Act2"])
+
     fig, ax = plt.subplots(figsize=(12,6))
     bar_width = 0.5
     day_positions = range(len(days))
 
     for day_idx, day in enumerate(days):
         for hour_idx, hour in enumerate(shift_hours):
-            row = df[(df["Day"]==day) & (df["Hour"]==hour)].iloc[0]
+            row = df[(df["Day"]==day) & (df["Hour"]==hour)]
+            if row.empty:
+                continue
+            row = row.iloc[0]
+
             start_hour = int(hour.split(":")[0])
             height = 0.3
 
-            for i, (emp, act) in enumerate([(row.Employee1, row.Activity1),
-                                            (row.Employee2, row.Activity1),
-                                            (row.Employee3, row.Activity2),
-                                            (row.Employee4, row.Activity2)]):
+            for i, (emp, act) in enumerate([(row.Emp1, row.Act1),
+                                            (row.Emp2, row.Act1),
+                                            (row.Emp3, row.Act2),
+                                            (row.Emp4, row.Act2)]):
+                # Handle None employees
+                if emp is None or emp == "None":
+                    bar_color = "white"
+                    text_color = "black"
+                    display_emp = ""
+                else:
+                    bar_color = employee_colors.get(emp, 'gray')
+                    text_color = 'white'
+                    display_emp = emp
+
                 ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
-                       color=employee_colors.get(emp,'gray'))
-                ax.text(day_idx, start_hour + (i+0.5)*height, f"{emp}\n{act}", ha='center', va='center',
-                        color='black' if emp=="None" else 'white', fontsize=7)
+                       color=bar_color, edgecolor='black')
+                ax.text(day_idx, start_hour + (i+0.5)*height, f"{display_emp}\n{act}", 
+                        ha='center', va='center', color=text_color, fontsize=7)
 
     ax.set_xticks(list(day_positions))
     ax.set_xticklabels(days)
     ax.set_ylabel("Hour")
-    ax.set_title("Weekly Schedule")
+    ax.set_title("Roster Preview")
     ax.grid(True, axis='y', linestyle='--', alpha=0.5)
     ax.invert_yaxis()
 
-    # Only show first and last hours
     start_hour = int(shift_hours[0].split(":")[0])
     end_hour = int(shift_hours[-1].split(":")[0])
     ax.set_yticks([start_hour, end_hour])
     ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
 
-    # Legend
-    emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
+    emp_patches = [mpatches.Patch(color=color, label=emp) 
+                   for emp,color in employee_colors.items() if emp!="None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
                    for act,color in activity_colors_dict.items() if act!="None"]
     ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
 
     plt.tight_layout()
     st.pyplot(fig)
+
 
 # -------------------
 # Function to save roster CSV and image
@@ -795,12 +827,16 @@ if safe_password == PASSWORD:
 
     if st.button("💾 Save Links"):
         st.success("Newdle links updated!")
-
+    # --- Button in main app ---
+    if st.button("🖼️ Preview Roster"):
+        preview_roster(days, shift_hours, employee_colors, activity_colors_dict)
     # -------------------
     # Save and Plot Roster
     # -------------------
     if st.button("Save and Plot Roster"):
-        save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
+        save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
+
+
 
 else:
     st.warning("Enter the correct password to enable actions.")
