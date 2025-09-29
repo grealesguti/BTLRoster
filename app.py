@@ -334,16 +334,6 @@ def load_newest_csv(folder: str):
     newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
     st.info(f"Using newest CSV: {os.path.join(folder, newest_csv)}")
     return pd.read_csv(os.path.join(folder, newest_csv))
-
-def get_last_roster(folder: str):
-    roster_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
-    if roster_files:
-        latest_roster = max(roster_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
-        st.success(f"Prefilling from last roster: {latest_roster}")
-        return pd.read_csv(os.path.join(folder, latest_roster))
-    st.warning("No previous roster found, starting empty.")
-    return None
-
 def show_latest_image(folder: str):
     jpg_files = [f for f in os.listdir(folder) if f.endswith(".jpg")]
     if jpg_files:
@@ -352,71 +342,91 @@ def show_latest_image(folder: str):
     else:
         st.warning("No roster images found yet.")
 
-def map_availability(df):
+# -------------------
+# CSV Loading
+# -------------------
+def get_last_roster(folder: str) -> pd.DataFrame:
+    """Load the most recent roster CSV, ensuring all fields are strings."""
+    roster_files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    if roster_files:
+        latest_roster = max(roster_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+        st.success(f"Prefilling from last roster: {latest_roster}")
+        df = pd.read_csv(os.path.join(folder, latest_roster), dtype=str).fillna("None")
+        return df
+    st.warning("No previous roster found, starting empty.")
+    return None
+
+# -------------------
+# Availability Mapping
+# -------------------
+def map_availability(df: pd.DataFrame) -> dict:
+    """Map availability from DataFrame to a nested dict: day -> hour -> employees."""
     availability_map = {day:{} for day in df['Day'].unique()}
     for _, row in df.iterrows():
-        if str(row['Availability']).strip().lower() == "available":
-            availability_map[row['Day']].setdefault(row['Hour'], []).append(row['Name'])
+        name = str(row.get('Name', 'None'))
+        day = str(row.get('Day', ''))
+        hour = str(row.get('Hour', ''))
+        avail = str(row.get('Availability', 'None')).strip().lower()
+        if avail == "available":
+            availability_map.setdefault(day, {}).setdefault(hour, []).append(name)
     return availability_map
+# -------------------
+# Build Roster Editor
+# -------------------
 def build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df):
     roster_data = []
     st.header("Roster Editor")
 
-    def colored_selectbox(label, options, selected_value, key):
-        """Returns a selectbox with a colored background if value is not 'None'."""
-        index = options.index(selected_value)
-        # Light green if selected, white if 'None'
-        color = "#d0f0c0" if selected_value != "None" else "#ffffff"
-        container = f"""
-        <div style="background-color: {color}; padding:2px; border-radius:4px">
-            {st.selectbox(label, options, index=index, key=key)}
-        </div>
-        """
-        return st.markdown(container, unsafe_allow_html=True)
+    # Precompute options
+    employee_options = ["None"] + employees
 
     for day in days:
-        # Add day of the week next to the date
+        # Display day with weekday
         try:
-            day_dt = datetime.strptime(day, "%Y-%m-%d")  # adjust format if different
+            day_dt = datetime.strptime(day, "%Y-%m-%d")
             weekday = day_dt.strftime("%A")
             day_label = f"{day} ({weekday})"
         except:
-            day_label = day  # fallback if parsing fails
-
+            day_label = day
         st.subheader(day_label)
 
         for hour in shift_hours:
             cols = st.columns([1,2,2,2,2,2,2])
             cols[0].write(hour)
 
+            # Prefill employees from availability map
             available_emps = availability_map.get(day, {}).get(hour, [])
             prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
 
-            # Prefill activities
-            activity1_value, activity2_value = "None", "None"
+            # Prefill activities from last roster
+            act1_value, act2_value = "None", "None"
             if latest_roster_df is not None:
                 row = latest_roster_df[(latest_roster_df['Day'] == day) & (latest_roster_df['Hour'] == hour)]
                 if not row.empty:
-                    activity1_value = row['Activity1'].values[0]
-                    activity2_value = row['Activity2'].values[0]
+                    act1_value = str(row.iloc[0].get('Activity1', "None") or "None")
+                    act2_value = str(row.iloc[0].get('Activity2', "None") or "None")
 
-            # Use colored selectboxes
-            emp1 = cols[1].selectbox("Emp1", ["None"]+employees, index=(["None"]+employees).index(prefill[0]), key=f"{day}_{hour}_emp1")
-            emp2 = cols[2].selectbox("Emp2", ["None"]+employees, index=(["None"]+employees).index(prefill[1]), key=f"{day}_{hour}_emp2")
-            emp3 = cols[3].selectbox("Emp3", ["None"]+employees, index=(["None"]+employees).index(prefill[2]), key=f"{day}_{hour}_emp3")
-            emp4 = cols[4].selectbox("Emp4", ["None"]+employees, index=(["None"]+employees).index(prefill[3]), key=f"{day}_{hour}_emp4")
+            # Employee selectboxes
+            emp1 = cols[1].selectbox("Emp1", employee_options, index=employee_options.index(prefill[0]), key=f"{day}_{hour}_emp1")
+            emp2 = cols[2].selectbox("Emp2", employee_options, index=employee_options.index(prefill[1]), key=f"{day}_{hour}_emp2")
+            emp3 = cols[3].selectbox("Emp3", employee_options, index=employee_options.index(prefill[2]), key=f"{day}_{hour}_emp3")
+            emp4 = cols[4].selectbox("Emp4", employee_options, index=employee_options.index(prefill[3]), key=f"{day}_{hour}_emp4")
 
-            act1 = cols[5].selectbox("Act1", activities, index=activities.index(activity1_value), key=f"{day}_{hour}_act1")
-            act2 = cols[6].selectbox("Act2", activities, index=activities.index(activity2_value), key=f"{day}_{hour}_act2")
+            # Activity selectboxes
+            act1 = cols[5].selectbox("Act1", activities, index=activities.index(act1_value) if act1_value in activities else 0, key=f"{day}_{hour}_act1")
+            act2 = cols[6].selectbox("Act2", activities, index=activities.index(act2_value) if act2_value in activities else 0, key=f"{day}_{hour}_act2")
 
             # Highlight selected values
-            for col, val, k in zip(cols[1:], [emp1, emp2, emp3, emp4, act1, act2],
-                                   [f"{day}_{hour}_emp1", f"{day}_{hour}_emp2", f"{day}_{hour}_emp3", f"{day}_{hour}_emp4",
-                                    f"{day}_{hour}_act1", f"{day}_{hour}_act2"]):
+            for col, val in zip(cols[1:] + cols[5:], [emp1, emp2, emp3, emp4, act1, act2]):
                 if val != "None":
                     col.markdown(f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px">{val}</div>', unsafe_allow_html=True)
 
-            roster_data.append([day, hour, emp1, emp2, act1, emp3, emp4, act2])
+            # Store in roster_data
+            roster_data.append({
+                "Day": day, "Hour": hour,
+                "Emp1": emp1, "Emp2": emp2, "Act1": act1,
+                "Emp3": emp3, "Emp4": emp4, "Act2": act2
+            })
 
     return roster_data
 
@@ -639,9 +649,6 @@ activity_colors = plt.cm.Set2.colors
 activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray"
                         for i, act in enumerate(activities)}
 
-availability_map = map_availability(availability_df)
-latest_roster_df = get_last_roster(SAVE_FOLDER)
-
 
 # -------------------
 # Streamlit ICS download section
@@ -665,7 +672,8 @@ safe_password = html.escape(entered_password)  # Extra safety if ever rendered
     
 if safe_password == PASSWORD:
     
-        
+    availability_map = map_availability(availability_df)
+    latest_roster_df = get_last_roster(SAVE_FOLDER)
     roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
     st.subheader("Actions")
     # Row of first three buttons
