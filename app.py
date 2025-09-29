@@ -383,35 +383,50 @@ def map_availability(df: pd.DataFrame) -> dict:
 def build_roster_editor(days, shift_hours, availability_df, latest_roster_df, activities):
     """
     Build a roster editor in Streamlit with selectboxes for employees and activities.
-    Handles missing employees in availability and NaN values in last roster.
+    Fully robust: missing columns or NaN values are treated as 'None'.
     """
-
     st.header("Roster Editor")
 
-    # --- Employees: merge availability + last roster ---
-    availability_employees = sorted(availability_df['Name'].unique())
+    # --- Employees: merge availability + last roster safely ---
+    try:
+        availability_employees = sorted(availability_df['Name'].dropna().unique())
+    except Exception:
+        availability_employees = []
+
     roster_employees = []
     if latest_roster_df is not None:
-        roster_employees_raw = latest_roster_df[['Emp1','Emp2','Emp3','Emp4']].values.ravel()
-        roster_employees = [str(e) for e in roster_employees_raw if pd.notna(e) and e != "None"]
+        # Normalize columns
+        latest_roster_df.columns = latest_roster_df.columns.str.strip()
+        emp_cols = [c for c in ['Emp1','Emp2','Emp3','Emp4'] if c in latest_roster_df.columns]
+        if emp_cols:
+            try:
+                roster_employees_raw = latest_roster_df[emp_cols].values.ravel()
+                roster_employees = [str(e) for e in roster_employees_raw if pd.notna(e) and e != "None"]
+            except Exception:
+                roster_employees = []
+
     employees = sorted(set(availability_employees) | set(roster_employees))
     employee_options = ["None"] + employees
 
-    # --- Map availability ---
+    # --- Map availability safely ---
     availability_map = {day:{} for day in days}
-    for _, row in availability_df.iterrows():
-        name = str(row.get('Name','None'))
-        day = str(row.get('Day',''))
-        hour = str(row.get('Hour',''))
-        avail = str(row.get('Availability','None')).strip().lower()
-        if avail == "available":
-            availability_map.setdefault(day, {}).setdefault(hour, []).append(name)
+    if availability_df is not None:
+        for _, row in availability_df.iterrows():
+            try:
+                name = str(row.get('Name','None'))
+                day = str(row.get('Day',''))
+                hour = str(row.get('Hour',''))
+                avail = str(row.get('Availability','None')).strip().lower()
+                if avail == "available":
+                    availability_map.setdefault(day, {}).setdefault(hour, []).append(name)
+            except Exception:
+                continue  # skip any problematic row
 
     # --- Helper to safely get index ---
     def safe_index(options, value):
         try:
             return options.index(value)
-        except ValueError:
+        except Exception:
             return 0  # fallback to "None"
 
     # --- Build editor ---
@@ -423,7 +438,7 @@ def build_roster_editor(days, shift_hours, availability_df, latest_roster_df, ac
             day_dt = datetime.strptime(day, "%Y-%m-%d")
             weekday = day_dt.strftime("%A")
             day_label = f"{day} ({weekday})"
-        except:
+        except Exception:
             day_label = day
         st.subheader(day_label)
 
@@ -431,17 +446,20 @@ def build_roster_editor(days, shift_hours, availability_df, latest_roster_df, ac
             cols = st.columns([1,2,2,2,2,2,2])
             cols[0].write(hour)
 
-            # Prefill employees from availability
+            # Prefill employees from availability safely
             available_emps = availability_map.get(day, {}).get(hour, [])
             prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
 
-            # Prefill activities from last roster
+            # Prefill activities from last roster safely
             act1_value, act2_value = "None", "None"
             if latest_roster_df is not None:
-                row = latest_roster_df[(latest_roster_df['Day']==day) & (latest_roster_df['Hour']==hour)]
-                if not row.empty:
-                    act1_value = str(row.iloc[0].get('Act1', "None") or "None")
-                    act2_value = str(row.iloc[0].get('Act2', "None") or "None")
+                try:
+                    row = latest_roster_df[(latest_roster_df.get('Day','')==day) & (latest_roster_df.get('Hour','')==hour)]
+                    if not row.empty:
+                        act1_value = str(row.iloc[0].get('Act1','None') or "None")
+                        act2_value = str(row.iloc[0].get('Act2','None') or "None")
+                except Exception:
+                    act1_value, act2_value = "None", "None"
 
             # Employee selectboxes
             emp1 = cols[1].selectbox("Emp1", employee_options, index=safe_index(employee_options, prefill[0]), key=f"{day}_{hour}_emp1")
