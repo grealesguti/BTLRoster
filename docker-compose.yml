@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  btloser_app:
+    build: .
+    container_name: btloser_app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./Newdles:/app/Newdles
+      - ./weekly_rosters:/app/weekly_rosters
+      - ./Availability:/app/Availability
+    restart: unless-stopped
+
