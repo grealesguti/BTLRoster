@@ -35,6 +35,12 @@ activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Glui
 # -------------------
 # Utility functions
 # -------------------
+def safe_index(options, value):
+    try:
+        return options.index(value)
+    except ValueError:
+        return 0  # fallback to "None"
+
 def select_old_csv(save_folder):
     # List all CSV files
     csv_files = [f for f in os.listdir(save_folder) if f.endswith(".csv")]
@@ -373,12 +379,43 @@ def map_availability(df: pd.DataFrame) -> dict:
 # -------------------
 # Build Roster Editor
 # -------------------
-def build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df):
-    roster_data = []
+
+def build_roster_editor(days, shift_hours, availability_df, latest_roster_df, activities):
+    """
+    Build a roster editor in Streamlit with selectboxes for employees and activities.
+    Handles missing employees in availability and NaN values in last roster.
+    """
+
     st.header("Roster Editor")
 
-    # Precompute options
+    # --- Employees: merge availability + last roster ---
+    availability_employees = sorted(availability_df['Name'].unique())
+    roster_employees = []
+    if latest_roster_df is not None:
+        roster_employees_raw = latest_roster_df[['Emp1','Emp2','Emp3','Emp4']].values.ravel()
+        roster_employees = [str(e) for e in roster_employees_raw if pd.notna(e) and e != "None"]
+    employees = sorted(set(availability_employees) | set(roster_employees))
     employee_options = ["None"] + employees
+
+    # --- Map availability ---
+    availability_map = {day:{} for day in days}
+    for _, row in availability_df.iterrows():
+        name = str(row.get('Name','None'))
+        day = str(row.get('Day',''))
+        hour = str(row.get('Hour',''))
+        avail = str(row.get('Availability','None')).strip().lower()
+        if avail == "available":
+            availability_map.setdefault(day, {}).setdefault(hour, []).append(name)
+
+    # --- Helper to safely get index ---
+    def safe_index(options, value):
+        try:
+            return options.index(value)
+        except ValueError:
+            return 0  # fallback to "None"
+
+    # --- Build editor ---
+    roster_data = []
 
     for day in days:
         # Display day with weekday
@@ -394,23 +431,23 @@ def build_roster_editor(days, shift_hours, employees, activities, availability_m
             cols = st.columns([1,2,2,2,2,2,2])
             cols[0].write(hour)
 
-            # Prefill employees from availability map
+            # Prefill employees from availability
             available_emps = availability_map.get(day, {}).get(hour, [])
             prefill = available_emps[:4] + ["None"]*(4-len(available_emps[:4]))
 
             # Prefill activities from last roster
             act1_value, act2_value = "None", "None"
             if latest_roster_df is not None:
-                row = latest_roster_df[(latest_roster_df['Day'] == day) & (latest_roster_df['Hour'] == hour)]
+                row = latest_roster_df[(latest_roster_df['Day']==day) & (latest_roster_df['Hour']==hour)]
                 if not row.empty:
-                    act1_value = str(row.iloc[0].get('Activity1', "None") or "None")
-                    act2_value = str(row.iloc[0].get('Activity2', "None") or "None")
+                    act1_value = str(row.iloc[0].get('Act1', "None") or "None")
+                    act2_value = str(row.iloc[0].get('Act2', "None") or "None")
 
             # Employee selectboxes
-            emp1 = cols[1].selectbox("Emp1", employee_options, index=employee_options.index(prefill[0]), key=f"{day}_{hour}_emp1")
-            emp2 = cols[2].selectbox("Emp2", employee_options, index=employee_options.index(prefill[1]), key=f"{day}_{hour}_emp2")
-            emp3 = cols[3].selectbox("Emp3", employee_options, index=employee_options.index(prefill[2]), key=f"{day}_{hour}_emp3")
-            emp4 = cols[4].selectbox("Emp4", employee_options, index=employee_options.index(prefill[3]), key=f"{day}_{hour}_emp4")
+            emp1 = cols[1].selectbox("Emp1", employee_options, index=safe_index(employee_options, prefill[0]), key=f"{day}_{hour}_emp1")
+            emp2 = cols[2].selectbox("Emp2", employee_options, index=safe_index(employee_options, prefill[1]), key=f"{day}_{hour}_emp2")
+            emp3 = cols[3].selectbox("Emp3", employee_options, index=safe_index(employee_options, prefill[2]), key=f"{day}_{hour}_emp3")
+            emp4 = cols[4].selectbox("Emp4", employee_options, index=safe_index(employee_options, prefill[3]), key=f"{day}_{hour}_emp4")
 
             # Activity selectboxes
             act1 = cols[5].selectbox("Act1", activities, index=activities.index(act1_value) if act1_value in activities else 0, key=f"{day}_{hour}_act1")
@@ -679,7 +716,7 @@ if safe_password == PASSWORD:
     
     availability_map = map_availability(availability_df)
     latest_roster_df = get_last_roster(SAVE_FOLDER)
-    roster_data = build_roster_editor(days, shift_hours, employees, activities, availability_map, latest_roster_df)
+    roster_data = build_roster_editor(days, shift_hours, availability_df, latest_roster_df, activities)
     st.subheader("Actions")
     # Row of first three buttons
     col1, col2, col3 = st.columns(3)
