@@ -677,7 +677,7 @@ if safe_password == PASSWORD:
             
 
     if st.button("Save and Plot Roster"):
-        save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, save_folder)
+        save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
             
     if st.button("🖼️ Show / Preview Roster"):
         preview_roster_image(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict)
