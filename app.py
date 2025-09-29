@@ -429,10 +429,9 @@ def build_roster_editor(days, shift_hours, employees, activities, availability_m
             })
 
     return roster_data
-
 def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, save_folder):
-    df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Employee1", "Employee2", "Activity1",
-                                            "Employee3", "Employee4", "Activity2"])
+    df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Emp1", "Emp2", "Act1",
+                                            "Emp3", "Emp4", "Act2"])
     date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
     csv_path = os.path.join(save_folder, f"roster_{date_str}.csv")
     df.to_csv(csv_path, index=False)
@@ -443,14 +442,18 @@ def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colo
 
     for day_idx, day in enumerate(days):
         for hour_idx, hour in enumerate(shift_hours):
-            row = df[(df["Day"]==day) & (df["Hour"]==hour)].iloc[0]
+            row = df[(df["Day"]==day) & (df["Hour"]==hour)]
+            if row.empty:
+                continue
+            row = row.iloc[0]
+
             start_hour = int(hour.split(":")[0])
             height = 0.3
 
-            for i, (emp, act) in enumerate([(row.Employee1, row.Activity1),
-                                            (row.Employee2, row.Activity1),
-                                            (row.Employee3, row.Activity2),
-                                            (row.Employee4, row.Activity2)]):
+            for i, (emp, act) in enumerate([(row.Emp1, row.Act1),
+                                            (row.Emp2, row.Act1),
+                                            (row.Emp3, row.Act2),
+                                            (row.Emp4, row.Act2)]):
                 ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
                        color=employee_colors.get(emp,'gray'))
                 ax.text(day_idx, start_hour + (i+0.5)*height, f"{emp}\n{act}", ha='center', va='center',
@@ -472,6 +475,7 @@ def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colo
     ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
 
     # Legend
+    import matplotlib.patches as mpatches
     emp_patches = [mpatches.Patch(color=color, label=emp) for emp,color in employee_colors.items() if emp!="None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
                    for act,color in activity_colors_dict.items() if act!="None"]
@@ -482,6 +486,7 @@ def save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colo
     plt.savefig(img_path, dpi=300)
     st.pyplot(fig)
     st.success(f"Roster saved to {csv_path} and {img_path}")
+
     
 # -------------------
 # Function to preview roster image (does not save)
