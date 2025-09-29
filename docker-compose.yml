@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  btloser:
+    build: .
+    container_name: btloser_app
+    ports:
+      - "5000:5000"  # Map container port 5000 to host
+    volumes:
+      - ./Newdles:/app/Newdles  # Optional: persist or share this folder
+    restart: unless-stopped
+
