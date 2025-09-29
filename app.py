@@ -208,13 +208,44 @@ def load_latest_newdle_csv():
     newest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(NEWDLE_FOLDER, f)))
     return pd.read_csv(os.path.join(NEWDLE_FOLDER, newest_csv))
 
-def get_latest_roster_csv(save_folder):
-    """Return the path of the latest CSV in the folder."""
+
+
+def get_latest_roster_csv(save_folder: str) -> str | None:
+    """Return the path of the latest CSV in the folder, or None if none exist."""
     csv_files = [f for f in os.listdir(save_folder) if f.endswith(".csv")]
     if not csv_files:
         return None
     latest_csv = max(csv_files, key=lambda f: os.path.getmtime(os.path.join(save_folder, f)))
     return os.path.join(save_folder, latest_csv)
+
+
+def extract_employees(df: pd.DataFrame, employee_cols=None) -> list[str]:
+    """Return a sorted list of unique employee names from the given DataFrame."""
+    if employee_cols is None:
+        employee_cols = ['Employee1', 'Employee2', 'Employee3', 'Employee4']
+    
+    all_employees = set()
+    for col in employee_cols:
+        if col in df.columns:
+            all_employees.update(df[col].dropna().astype(str))
+    return sorted(all_employees)
+
+
+def select_employee(employees: list[str]) -> str | None:
+    """Display a Streamlit selectbox to choose an employee."""
+    employee_selected = st.selectbox("Select your name", ["None"] + employees)
+    return None if employee_selected == "None" else employee_selected
+
+
+def download_ics(latest_csv: str, employee: str):
+    """Generate ICS for an employee and add a Streamlit download button."""
+    calendar = generate_employee_ics_from_csv(latest_csv, employee)
+    st.download_button(
+        label=f"Download ICS for {employee}",
+        data=str(calendar),
+        file_name=f"{employee}_shifts.ics",
+        mime="text/calendar"
+    )
 
 def generate_employee_ics_from_csv(csv_path, employee_name):
     """Generate an ICS calendar file for the specified employee from a CSV."""
@@ -616,21 +647,13 @@ latest_roster_df = get_last_roster(SAVE_FOLDER)
 # Streamlit ICS download section
 # -------------------
 latest_csv = get_latest_roster_csv(SAVE_FOLDER)
-if latest_csv is None:
-    st.warning("No roster CSVs found to generate ICS.")
-else:
-    df = pd.read_csv(latest_csv)
-    employees = sorted(set(df['Employee1']).union(df['Employee2'], df['Employee3'], df['Employee4']))
-    employee_selected = st.selectbox("Select your name", ["None"] + employees)
+
+df = pd.read_csv(latest_csv)
+employees = extract_employees(df)
     
-    if employee_selected != "None":
-        calendar = generate_employee_ics_from_csv(latest_csv, employee_selected)
-        st.download_button(
-            label=f"Download ICS for {employee_selected}",
-            data=str(calendar),
-            file_name=f"{employee_selected}_shifts.ics",
-            mime="text/calendar"
-        )
+employee_selected = select_employee(employees)
+if employee_selected:
+    download_ics(latest_csv, employee_selected)
 
 # -------------------
 # PASSWORD PROTECTION
@@ -679,11 +702,11 @@ if safe_password == PASSWORD:
     if st.button("Save and Plot Roster"):
         save_and_plot(roster_data, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
             
-    if st.button("🖼️ Show / Preview Roster"):
-        preview_roster_image(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict)
+    #if st.button("🖼️ Show / Preview Roster"):
+    #    preview_roster_image(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict)
 
-    if st.button("💾 Save Roster (CSV & JPG)"):
-        save_roster(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
+    #if st.button("💾 Save Roster (CSV & JPG)"):
+    #    save_roster(latest_roster_df, days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
 
 else:
     st.warning("Enter the correct password to enable actions.")
