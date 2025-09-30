@@ -20,7 +20,6 @@ import glob
 # -------------------
 NEWDLE_FOLDER = "Newdles"
 
-
 SAVE_FOLDER = "weekly_rosters"
 AVAILABILITY_FOLDER = "Availability"
 
@@ -30,13 +29,44 @@ os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
 SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
-PASSWORD = "mypassword123"  # Replace with your desired password
+PASSWORD = "123"  # Replace with your desired password
 activities = ["None", "Cabling ETH", "Airex Foiling", "Airex Modif.","Airex Gluing", "Beam Precal.", "Grounding Strips"]
 
 # -------------------
 # Utility functions
 # -------------------
+def process_newdle_csv(file_path, save_folder):
+    """
+    Process a Newdle CSV export into a standard availability DataFrame
+    and save it with a date-stamped filename.
+    """
+    df = pd.read_csv(file_path)
+    
+    # Identify time slot columns (exclude 'Participant name' and 'Comment')
+    time_slots = [col for col in df.columns if col not in ['Participant name', 'Comment']]
 
+    # Extract rows
+    rows = []
+    for _, row in df.iterrows():
+        name = str(row.get('Participant name', 'Unknown')).strip()
+        for ts in time_slots:
+            try:
+                day, hour = ts.split("T")
+            except Exception:
+                continue  # skip malformed column names
+            availability = str(row[ts]).strip().lower()
+            if availability not in ['available', 'unavailable']:
+                availability = 'unavailable'
+            rows.append([day, hour, name, availability])
+
+    availability_df = pd.DataFrame(rows, columns=['Day', 'Hour', 'Name', 'Availability'])
+
+    # Save with current date
+    date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
+    save_path = os.path.join(save_folder, f"availability_{date_str}.csv")
+    availability_df.to_csv(save_path, index=False)
+    
+    return availability_df, save_path
 def upload_and_save_newdle_csv():
     """
     Streamlit uploader to save a new CSV into the Newdles folder.
@@ -407,23 +437,25 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
     - Default: all fields "None"
     - Two buttons to prefill from last roster or availability
     - Dropdowns to select older CSVs
-    - Highlights non-"None" names/activities in light green
+    - Highlights prefilled values in light green *below* their selectbox
+    - Layout: 2 rows of assignments per hour
     """
     st.header("Roster Editor")
 
     # --- Initialize roster_data ---
     if "roster_data" not in st.session_state:
         st.session_state["roster_data"] = [
-            {"Day": day, "Hour": hour,
-             "Emp1": "None", "Emp2": "None", "Act1": "None",
-             "Emp3": "None", "Emp4": "None", "Act2": "None"}
+            {
+                "Day": day, "Hour": hour,
+                **{f"Emp{i}": "None" for i in range(1, 9)},
+                **{f"Act{j}": "None" for j in range(1, 5)},
+            }
             for day in days for hour in shift_hours
         ]
 
     # --- Prefill buttons and dropdowns ---
     col1, col2 = st.columns(2)
 
-    # --- Roster CSV dropdown ---
     roster_files = [f for f in os.listdir(SAVE_FOLDER) if f.endswith(".csv")]
     roster_files.sort(reverse=True)
     selected_roster_csv = st.selectbox("Select roster CSV to prefill", ["LATEST"] + roster_files)
@@ -440,22 +472,17 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             if csv_path:
                 latest_roster_df = pd.read_csv(csv_path, dtype=str).fillna("None")
                 for row in st.session_state["roster_data"]:
-                    day = row["Day"]
-                    hour = row["Hour"]
                     match = latest_roster_df[
-                        (latest_roster_df.get("Day","") == day) &
-                        (latest_roster_df.get("Hour","") == hour)
+                        (latest_roster_df.get("Day", "") == row["Day"]) &
+                        (latest_roster_df.get("Hour", "") == row["Hour"])
                     ]
                     if not match.empty:
-                        row["Emp1"] = match.iloc[0].get("Emp1","None") or "None"
-                        row["Emp2"] = match.iloc[0].get("Emp2","None") or "None"
-                        row["Emp3"] = match.iloc[0].get("Emp3","None") or "None"
-                        row["Emp4"] = match.iloc[0].get("Emp4","None") or "None"
-                        row["Act1"] = match.iloc[0].get("Act1","None") or "None"
-                        row["Act2"] = match.iloc[0].get("Act2","None") or "None"
+                        for e in range(1, 9):
+                            row[f"Emp{e}"] = match.iloc[0].get(f"Emp{e}", "None") or "None"
+                        for a in range(1, 5):
+                            row[f"Act{a}"] = match.iloc[0].get(f"Act{a}", "None") or "None"
             st.session_state["prefill_trigger"] = not st.session_state.get("prefill_trigger", False)
 
-    # --- Availability CSV dropdown ---
     avail_files = [f for f in os.listdir(AVAILABILITY_FOLDER) if f.endswith(".csv")]
     avail_files.sort(reverse=True)
     selected_avail_csv = st.selectbox("Select availability CSV to prefill", ["LATEST"] + avail_files)
@@ -472,45 +499,59 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             if csv_path:
                 availability_df = pd.read_csv(csv_path, dtype=str).fillna("None")
                 for row in st.session_state["roster_data"]:
-                    day = row["Day"]
-                    hour = row["Hour"]
                     available_emps = availability_df[
-                        (availability_df.get("Day","") == day) &
-                        (availability_df.get("Hour","") == hour) &
-                        (availability_df.get("Availability","").str.lower() == "available")
+                        (availability_df.get("Day", "") == row["Day"]) &
+                        (availability_df.get("Hour", "") == row["Hour"]) &
+                        (availability_df.get("Availability", "").str.lower() == "available")
                     ]["Name"].tolist()
-                    row["Emp1"] = available_emps[0] if len(available_emps) > 0 else "None"
-                    row["Emp2"] = available_emps[1] if len(available_emps) > 1 else "None"
-                    row["Emp3"] = available_emps[2] if len(available_emps) > 2 else "None"
-                    row["Emp4"] = available_emps[3] if len(available_emps) > 3 else "None"
+                    for e in range(1, 9):
+                        row[f"Emp{e}"] = available_emps[e-1] if len(available_emps) >= e else "None"
             st.session_state["prefill_trigger"] = not st.session_state.get("prefill_trigger", False)
 
     # --- Build editor UI ---
-    employees = sorted(set([r[e] for r in st.session_state["roster_data"] for e in ["Emp1","Emp2","Emp3","Emp4"]]))
+    employees = sorted(set([r[e] for r in st.session_state["roster_data"] for e in [f"Emp{i}" for i in range(1, 9)]]))
     employee_options = ["None"] + employees
 
     for day in days:
         st.subheader(day)
         for hour in shift_hours:
-            row_data = next(r for r in st.session_state["roster_data"] if r["Day"]==day and r["Hour"]==hour)
-            cols = st.columns([1,2,2,2,2,2,2])
-            cols[0].write(hour)
+            row_data = next(r for r in st.session_state["roster_data"] if r["Day"] == day and r["Hour"] == hour)
 
-            # Employee selectboxes
-            row_data["Emp1"] = cols[1].selectbox("Emp1", employee_options, index=employee_options.index(row_data["Emp1"]), key=f"{day}_{hour}_emp1")
-            row_data["Emp2"] = cols[2].selectbox("Emp2", employee_options, index=employee_options.index(row_data["Emp2"]), key=f"{day}_{hour}_emp2")
-            row_data["Emp3"] = cols[3].selectbox("Emp3", employee_options, index=employee_options.index(row_data["Emp3"]), key=f"{day}_{hour}_emp3")
-            row_data["Emp4"] = cols[4].selectbox("Emp4", employee_options, index=employee_options.index(row_data["Emp4"]), key=f"{day}_{hour}_emp4")
+            st.markdown(f"**Hour: {hour}**")
 
-            # Activity selectboxes
-            row_data["Act1"] = cols[5].selectbox("Act1", activities, index=activities.index(row_data["Act1"]) if row_data["Act1"] in activities else 0, key=f"{day}_{hour}_act1")
-            row_data["Act2"] = cols[6].selectbox("Act2", activities, index=activities.index(row_data["Act2"]) if row_data["Act2"] in activities else 0, key=f"{day}_{hour}_act2")
+            # --- Row 1 ---
+            row1_cols = st.columns(6)
+            for i, field in enumerate(["Emp1", "Emp2", "Act1", "Emp3", "Emp4", "Act2"]):
+                if "Emp" in field:
+                    options = employee_options
+                    idx = employee_options.index(row_data[field])
+                else:
+                    options = activities
+                    idx = activities.index(row_data[field]) if row_data[field] in activities else 0
 
-            # Highlight non-"None" selections
-            highlight_values = [row_data["Emp1"], row_data["Emp2"], row_data["Emp3"], row_data["Emp4"], row_data["Act1"], row_data["Act2"]]
-            for col, val in zip(cols[1:] + cols[5:], highlight_values):
-                if val != "None":
-                    col.markdown(f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px">{val}</div>', unsafe_allow_html=True)
+                row_data[field] = row1_cols[i].selectbox(field, options, index=idx, key=f"{day}_{hour}_{field}")
+                if row_data[field] != "None":  # highlight below selectbox
+                    row1_cols[i].markdown(
+                        f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px; text-align:center">{row_data[field]}</div>',
+                        unsafe_allow_html=True
+                    )
+
+            # --- Row 2 ---
+            row2_cols = st.columns(6)
+            for i, field in enumerate(["Emp5", "Emp6", "Act3", "Emp7", "Emp8", "Act4"]):
+                if "Emp" in field:
+                    options = employee_options
+                    idx = employee_options.index(row_data[field])
+                else:
+                    options = activities
+                    idx = activities.index(row_data[field]) if row_data[field] in activities else 0
+
+                row_data[field] = row2_cols[i].selectbox(field, options, index=idx, key=f"{day}_{hour}_{field}")
+                if row_data[field] != "None":  # highlight below selectbox
+                    row2_cols[i].markdown(
+                        f'<div style="background-color:#d0f0c0; border-radius:4px; padding:2px; text-align:center">{row_data[field]}</div>',
+                        unsafe_allow_html=True
+                    )
 
     return st.session_state["roster_data"]
 
@@ -518,7 +559,8 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
 def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save_folder):
     """
     Save and plot the roster using the current values from st.session_state.
-    Prefilled slots are included.
+    Supports up to Emp1–Emp8 and Act1–Act4.
+    Each 2 employees are surrounded by a rectangle of the corresponding activity color.
     """
     roster_data = st.session_state.get("roster_data", [])
 
@@ -526,31 +568,42 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
         st.warning("Roster is empty, nothing to save.")
         return
 
-    df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Emp1", "Emp2", "Act1",
-                                            "Emp3", "Emp4", "Act2"])
+    df = pd.DataFrame(roster_data, columns=["Day", "Hour"] +
+                      [f"Emp{i}" for i in range(1, 9)] +
+                      [f"Act{j}" for j in range(1, 5)])
+
     date_str = datetime.now().strftime("%Y-%m-%d_%H%M")
     csv_path = os.path.join(save_folder, f"roster_{date_str}.csv")
     df.to_csv(csv_path, index=False)
 
-    fig, ax = plt.subplots(figsize=(12,6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     bar_width = 0.5
     day_positions = range(len(days))
 
     for day_idx, day in enumerate(days):
         for hour_idx, hour in enumerate(shift_hours):
-            row = df[(df["Day"]==day) & (df["Hour"]==hour)]
+            row = df[(df["Day"] == day) & (df["Hour"] == hour)]
             if row.empty:
                 continue
             row = row.iloc[0]
 
             start_hour = int(hour.split(":")[0])
-            height = 0.3
+            height = 0.25
 
-            for i, (emp, act) in enumerate([(row.Emp1, row.Act1),
-                                            (row.Emp2, row.Act1),
-                                            (row.Emp3, row.Act2),
-                                            (row.Emp4, row.Act2)]):
-                # Handle None employees
+            # Employee–activity pairs (two per activity)
+            emp_act_pairs = [
+                (row.Emp1, row.Act1),
+                (row.Emp2, row.Act1),
+                (row.Emp3, row.Act2),
+                (row.Emp4, row.Act2),
+                (row.Emp5, row.Act3),
+                (row.Emp6, row.Act3),
+                (row.Emp7, row.Act4),
+                (row.Emp8, row.Act4),
+            ]
+
+            # Plot employees
+            for i, (emp, act) in enumerate(emp_act_pairs):
                 if emp is None or emp == "None":
                     bar_color = "white"
                     text_color = "black"
@@ -560,10 +613,24 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
                     text_color = 'white'
                     display_emp = emp
 
-                ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
+                ax.bar(day_idx, height, bottom=start_hour + i * height, width=bar_width,
                        color=bar_color, edgecolor='black')
-                ax.text(day_idx, start_hour + (i+0.5)*height, f"{display_emp}\n{act}", 
+                ax.text(day_idx, start_hour + (i + 0.5) * height,
+                        f"{display_emp}\n{act if act != 'None' else ''}",
                         ha='center', va='center', color=text_color, fontsize=7)
+
+            # Surround pairs with activity-colored rectangles
+            for pair_idx, act_col in enumerate([row.Act1, row.Act2, row.Act3, row.Act4]):
+                if act_col and act_col != "None":
+                    act_color = activity_colors_dict.get(act_col, "black")
+                    base_y = start_hour + pair_idx * 2 * height
+                    rect_height = 2 * height
+                    rect = plt.Rectangle(
+                        (day_idx - bar_width/2, base_y),
+                        bar_width, rect_height,
+                        fill=False, edgecolor=act_color, linewidth=2
+                    )
+                    ax.add_patch(rect)
 
     ax.set_xticks(list(day_positions))
     ax.set_xticklabels(days)
@@ -578,11 +645,11 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
     ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
 
     import matplotlib.patches as mpatches
-    emp_patches = [mpatches.Patch(color=color, label=emp) 
-                   for emp,color in employee_colors.items() if emp!="None"]
+    emp_patches = [mpatches.Patch(color=color, label=emp)
+                   for emp, color in employee_colors.items() if emp != "None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
-                   for act,color in activity_colors_dict.items() if act!="None"]
-    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+                   for act, color in activity_colors_dict.items() if act != "None"]
+    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
 
     plt.tight_layout()
     img_path = os.path.join(save_folder, f"roster_{date_str}.jpg")
@@ -591,40 +658,47 @@ def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save
     st.success(f"Roster saved to {csv_path} and {img_path}")
 
 
-# -------------------
-# Function to preview roster image (does not save)
-# -------------------
 def preview_roster(days, shift_hours, employee_colors, activity_colors_dict):
     """
     Preview the current roster in a plot using session_state.
+    Supports up to Emp1–Emp8 and Act1–Act4.
+    Each 2 employees are surrounded by a rectangle of the corresponding activity color.
     """
     roster_data = st.session_state.get("roster_data", [])
     if not roster_data:
         st.warning("Roster is empty, nothing to preview.")
         return
 
-    df = pd.DataFrame(roster_data, columns=["Day", "Hour", "Emp1", "Emp2", "Act1",
-                                            "Emp3", "Emp4", "Act2"])
+    df = pd.DataFrame(roster_data, columns=["Day", "Hour"] +
+                      [f"Emp{i}" for i in range(1, 9)] +
+                      [f"Act{j}" for j in range(1, 5)])
 
-    fig, ax = plt.subplots(figsize=(12,6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     bar_width = 0.5
     day_positions = range(len(days))
 
     for day_idx, day in enumerate(days):
         for hour_idx, hour in enumerate(shift_hours):
-            row = df[(df["Day"]==day) & (df["Hour"]==hour)]
+            row = df[(df["Day"] == day) & (df["Hour"] == hour)]
             if row.empty:
                 continue
             row = row.iloc[0]
 
             start_hour = int(hour.split(":")[0])
-            height = 0.3
+            height = 0.25
 
-            for i, (emp, act) in enumerate([(row.Emp1, row.Act1),
-                                            (row.Emp2, row.Act1),
-                                            (row.Emp3, row.Act2),
-                                            (row.Emp4, row.Act2)]):
-                # Handle None employees
+            emp_act_pairs = [
+                (row.Emp1, row.Act1),
+                (row.Emp2, row.Act1),
+                (row.Emp3, row.Act2),
+                (row.Emp4, row.Act2),
+                (row.Emp5, row.Act3),
+                (row.Emp6, row.Act3),
+                (row.Emp7, row.Act4),
+                (row.Emp8, row.Act4),
+            ]
+
+            for i, (emp, act) in enumerate(emp_act_pairs):
                 if emp is None or emp == "None":
                     bar_color = "white"
                     text_color = "black"
@@ -634,10 +708,24 @@ def preview_roster(days, shift_hours, employee_colors, activity_colors_dict):
                     text_color = 'white'
                     display_emp = emp
 
-                ax.bar(day_idx, height, bottom=start_hour + i*height, width=bar_width,
+                ax.bar(day_idx, height, bottom=start_hour + i * height, width=bar_width,
                        color=bar_color, edgecolor='black')
-                ax.text(day_idx, start_hour + (i+0.5)*height, f"{display_emp}\n{act}", 
+                ax.text(day_idx, start_hour + (i + 0.5) * height,
+                        f"{display_emp}\n{act if act != 'None' else ''}",
                         ha='center', va='center', color=text_color, fontsize=7)
+
+            # Surround pairs with activity-colored rectangles
+            for pair_idx, act_col in enumerate([row.Act1, row.Act2, row.Act3, row.Act4]):
+                if act_col and act_col != "None":
+                    act_color = activity_colors_dict.get(act_col, "black")
+                    base_y = start_hour + pair_idx * 2 * height
+                    rect_height = 2 * height
+                    rect = plt.Rectangle(
+                        (day_idx - bar_width/2, base_y),
+                        bar_width, rect_height,
+                        fill=False, edgecolor=act_color, linewidth=2
+                    )
+                    ax.add_patch(rect)
 
     ax.set_xticks(list(day_positions))
     ax.set_xticklabels(days)
@@ -651,11 +739,12 @@ def preview_roster(days, shift_hours, employee_colors, activity_colors_dict):
     ax.set_yticks([start_hour, end_hour])
     ax.set_yticklabels([shift_hours[0], shift_hours[-1]])
 
-    emp_patches = [mpatches.Patch(color=color, label=emp) 
-                   for emp,color in employee_colors.items() if emp!="None"]
+    import matplotlib.patches as mpatches
+    emp_patches = [mpatches.Patch(color=color, label=emp)
+                   for emp, color in employee_colors.items() if emp != "None"]
     act_patches = [mpatches.Patch(edgecolor=color, facecolor='none', label=act, linewidth=2)
-                   for act,color in activity_colors_dict.items() if act!="None"]
-    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+                   for act, color in activity_colors_dict.items() if act != "None"]
+    ax.legend(handles=emp_patches + act_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
 
     plt.tight_layout()
     st.pyplot(fig)
@@ -713,6 +802,52 @@ def save_roster(df, days, shift_hours, employee_colors, activity_colors_dict, sa
     plt.savefig(img_path, dpi=300)
     st.success(f"Roster saved to {csv_path} and {img_path}")
 
+def show_notes_box(filename="notes.txt"):
+    """Display the contents of a txt file in a non-editable text box."""
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        content = "No notes available (file not found)."
+
+    st.subheader("Notes")
+    st.text_area("File contents", content, height=300, disabled=True)
+    # Alternative (more compact look):
+    # st.code(content, language=None)
+
+import html
+
+def sanitize_text(raw_text: str) -> str:
+    # 1. Escape HTML/JS
+    text = html.escape(raw_text)
+    # 2. Remove unprintable/control characters
+    text = ''.join(ch for ch in text if ch.isprintable() or ch in '\n\t')
+    # 3. Optionally, limit length
+    return text[:10000]  # prevent insanely long input
+
+def editable_notes_box(filename="notes.txt"):
+    """Show and edit the contents of a txt file safely in the Streamlit app."""
+    
+    # Load file contents
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        content = ""
+
+    st.subheader("Notes Editor")
+
+    # Editable text box (plain text)
+    edited_content = st.text_area("Edit notes", content, height=300)
+
+    # Save button
+    if st.button("💾 Save Notes"):
+        safe_content = sanitize_text(edited_content)  # sanitize input
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(safe_content)
+        st.success("Notes saved successfully!")
+        st.experimental_rerun()  # refresh the app
+    
 # -------------------
 # MAIN
 # -------------------
@@ -720,6 +855,8 @@ def save_roster(df, days, shift_hours, employee_colors, activity_colors_dict, sa
 # -------------------
 # Default links
 # -------------------
+st.set_page_config(layout="wide")  # expands app to full width
+
 default_links = [
     "https://newdle.cern.ch/newdle/w5NzNRKR",
     "https://example.com/newdle2",
@@ -772,6 +909,8 @@ employee_selected = select_employee(extract_employees(df))
 if employee_selected:
     download_ics(latest_csv, employee_selected)
 
+show_notes_box("myfile.txt")
+    
 # -------------------
 # PASSWORD PROTECTION
 # -------------------
@@ -797,11 +936,44 @@ if safe_password == PASSWORD:
     # -------------------
     # Actions
     # -------------------
+    st.subheader("Pre-processing")
     if st.button("📤 Upload & Save Newdle CSV"):
         uploaded_df = upload_and_save_newdle_csv()
         if uploaded_df is not None:
             st.write("Preview of uploaded CSV:")
             st.dataframe(uploaded_df)
+    
+    # Find all CSVs in the folder
+    #csv_files = glob(os.path.join(NEWDLE_FOLDER, "*.csv"))
+    csv_files = glob.glob(os.path.join(NEWDLE_FOLDER, "*.csv"))  # works
+
+    csv_files.sort(key=os.path.getmtime, reverse=True)  # newest first
+
+    if not csv_files:
+        st.warning(f"No CSV files found in folder '{NEWDLE_FOLDER}'")
+    else:
+        st.subheader("Select a Newdle CSV to process")
+        selected_csv = st.selectbox("Choose CSV", csv_files, format_func=lambda x: os.path.basename(x))
+
+        if st.button("📤 Process Selected CSV"):
+            try:
+                availability_df, save_path = process_newdle_csv(selected_csv, AVAILABILITY_FOLDER)
+                st.success(f"Processed successfully! Saved to `{save_path}`")
+                st.dataframe(availability_df)
+            except Exception as e:
+                st.error(f"Error processing CSV: {e}")
+    
+    # -------------------
+    # Update Next Newdle Links
+    # -------------------
+    st.markdown("### Update Next Newdle Links (up to 4)")
+    for i in range(4):
+        new_link = st.text_input(f"Link {i+1}", value=st.session_state["newdle_links"][i], key=f"link_input_{i}")
+        st.session_state["newdle_links"][i] = new_link.strip()
+
+    if st.button("💾 Save Links"):
+        st.success("Newdle links updated!")
+    
     
     st.subheader("Actions")
     col1, col2, col3 = st.columns(3)
@@ -817,16 +989,6 @@ if safe_password == PASSWORD:
         if st.button("📢 Send Notification"):
             send_schedule_notification()
 
-    # -------------------
-    # Update Next Newdle Links
-    # -------------------
-    st.markdown("### Update Next Newdle Links (up to 4)")
-    for i in range(4):
-        new_link = st.text_input(f"Link {i+1}", value=st.session_state["newdle_links"][i], key=f"link_input_{i}")
-        st.session_state["newdle_links"][i] = new_link.strip()
-
-    if st.button("💾 Save Links"):
-        st.success("Newdle links updated!")
     # --- Button in main app ---
     if st.button("🖼️ Preview Roster"):
         preview_roster(days, shift_hours, employee_colors, activity_colors_dict)
@@ -836,6 +998,7 @@ if safe_password == PASSWORD:
     if st.button("Save and Plot Roster"):
         save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, SAVE_FOLDER)
 
+    editable_notes_box("myfile.txt")
 
 
 else:
