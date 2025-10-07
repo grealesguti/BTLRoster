@@ -100,7 +100,7 @@ def upload_and_save_newdle_csv():
             # Save to folder with timestamp to avoid overwriting
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join(NEWLDES_FOLDER, f"newdle_{timestamp}.csv")
+            save_path = os.path.join(NEWDLE_FOLDER, f"newdle_{timestamp}.csv")
             df.to_csv(save_path, index=False)
             st.success(f"CSV saved successfully to {save_path}")
             return df  # return dataframe in case you want to use it immediately
