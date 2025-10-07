@@ -87,26 +87,46 @@ def process_newdle_csv(file_path, save_folder):
     
     return availability_df, save_path
 def upload_and_save_newdle_csv():
-    """
-    Streamlit uploader to save a new CSV into the Newdles folder.
-    """
     st.subheader("Upload a Newdle CSV")
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-    if uploaded_file is not None:
-        try:
-            # Read CSV to check it's valid
-            df = pd.read_csv(uploaded_file)
-            # Save to folder with timestamp to avoid overwriting
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join(NEWDLE_FOLDER, f"newdle_{timestamp}.csv")
-            df.to_csv(save_path, index=False)
-            st.success(f"CSV saved successfully to {save_path}")
-            return df  # return dataframe in case you want to use it immediately
-        except Exception as e:
-            st.error(f"Error reading or saving CSV: {e}")
-    return None
+    if uploaded_file is None:
+        st.info("No file uploaded yet.")
+        return None
+
+    st.write(f"📄 Uploaded file: `{uploaded_file.name}`")
+
+    try:
+        # Read CSV
+        df = pd.read_csv(uploaded_file)
+        st.success("✅ CSV read successfully!")
+
+        # Debug folder info
+        st.write(f"📂 Target folder: `{NEWDLE_FOLDER}`")
+        if not os.path.exists(NEWDLE_FOLDER):
+            st.warning(f"Folder does not exist. Creating it now...")
+            os.makedirs(NEWDLE_FOLDER, exist_ok=True)
+
+        st.write(f"Folder exists: {os.path.exists(NEWDLE_FOLDER)}")
+        st.write(f"Folder contents before save: {os.listdir(NEWDLE_FOLDER)}")
+
+        # Save CSV
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = os.path.join(NEWDLE_FOLDER, f"newdle_{timestamp}.csv")
+        df.to_csv(save_path, index=False)
+
+        st.success(f"✅ CSV saved successfully to `{save_path}`")
+        st.write(f"Folder contents after save: {os.listdir(NEWDLE_FOLDER)}")
+
+        return df
+
+    except Exception as e:
+        st.error(f"❌ Error reading or saving CSV: {e}")
+        import traceback
+        st.text(traceback.format_exc())
+        return None
+
+
 def safe_index(options, value):
     try:
         return options.index(value)
@@ -1031,6 +1051,7 @@ st.subheader("Enter Password to Enable Editor & Actions")
 entered_password = st.text_input("Password", type="password")
 safe_password = html.escape(entered_password)
 
+
 if safe_password == PASSWORD:
     # -------------------
     # Roster Editor
@@ -1049,7 +1070,45 @@ if safe_password == PASSWORD:
     # -------------------
     # Actions
     # -------------------
+    
     st.subheader("Pre-processing")
+    
+
+    st.subheader("Upload a Newdle CSV (Debug Version)")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+
+    if uploaded_file is not None:
+        st.write(f"📄 Uploaded file: {uploaded_file.name}")
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.success("✅ CSV read successfully!")
+
+            st.write(f"📂 Target folder: `{NEWDLE_FOLDER}`")
+            if not os.path.exists(NEWDLE_FOLDER):
+                st.warning("Folder does not exist. Creating it now...")
+                os.makedirs(NEWDLE_FOLDER, exist_ok=True)
+
+            st.write(f"Folder exists: {os.path.exists(NEWDLE_FOLDER)}")
+            st.write(f"Folder contents before save: {os.listdir(NEWDLE_FOLDER)}")
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join(NEWDLE_FOLDER, f"newdle_{timestamp}.csv")
+            df.to_csv(save_path, index=False)
+
+            st.success(f"✅ CSV saved successfully to `{save_path}`")
+            st.write(f"Folder contents after save: {os.listdir(NEWDLE_FOLDER)}")
+
+            st.dataframe(df)
+
+        except Exception as e:
+            st.error(f"❌ Error reading or saving CSV: {e}")
+            import traceback
+            st.text(traceback.format_exc())
+    else:
+        st.info("Please upload a CSV file.")
+    
+    
     if st.button("📤 Upload & Save Newdle CSV"):
         uploaded_df = upload_and_save_newdle_csv()
         if uploaded_df is not None:
