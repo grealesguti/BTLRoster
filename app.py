@@ -17,10 +17,10 @@ import glob
 # -------------------
 # CONFIG
 # -------------------
-NEWDLE_FOLDER = "Newdles"
+NEWDLE_FOLDER = "app/Newdles"
 
-SAVE_FOLDER = "weekly_rosters"
-AVAILABILITY_FOLDER = "Availability"
+SAVE_FOLDER = "app/weekly_rosters"
+AVAILABILITY_FOLDER = "app/Availability"
 
 os.makedirs(SAVE_FOLDER, exist_ok=True)
 os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
