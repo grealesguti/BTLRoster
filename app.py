@@ -25,7 +25,8 @@ AVAILABILITY_FOLDER = "Availability"
 os.makedirs(SAVE_FOLDER, exist_ok=True)
 os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 
-WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih"
+#WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih" # TIF channel
+WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/crdexmh4abb13b13wo5s7ux5se"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
 SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
 PASSWORD = "123"  # Replace with your desired password
@@ -382,6 +383,47 @@ def send_schedule_notification():
         st.success("Message sent successfully!")
     else:
         st.error(f"Failed to send message: {response.status_code} {response.text}")
+        
+import requests
+import streamlit as st
+
+def send_schedule_reminder():
+    """Send a Mattermost message announcing the latest Newdles."""
+
+    # Get latest links from session state
+    links_data = st.session_state.get("newdle_links_data", [])
+
+    if not links_data:
+        st.warning("No Newdle links available to send.")
+        return
+
+    # Build the message with titles and links
+    message_lines = ["A reminder to fill the last Newdles! Check the links below:"]
+    for item in links_data:
+        link = item.get("link", "").strip()
+        title = item.get("title", "").strip() or link
+        if link:
+            message_lines.append(f"- {title}: {link}")
+
+    message_text = "\n".join(message_lines)
+
+    # Prepare payload
+    payload = {
+        "channel_id": CHANNEL_ID,
+        "text": message_text
+    }
+
+    # Send request
+    try:
+        response = requests.post(WEBHOOK_URL, json=payload)
+        if response.status_code == 200:
+            st.success("Message sent successfully!")
+        else:
+            st.error(f"Failed to send message: {response.status_code} {response.text}")
+    except Exception as e:
+        st.error(f"Error sending message: {e}")
+
+        
 def save_uploaded_csv(uploaded_file, folder):
     """Save uploaded CSV to folder with timestamped name."""
     date_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -1071,9 +1113,9 @@ if safe_password == PASSWORD:
     #        availability_df = upload_and_process_newdle_csv()
     #        if availability_df is not None:
     #            st.experimental_rerun()
-    #with col2:
-    #    if st.button("🖼️ Update Image"):
-    #        show_latest_image(SAVE_FOLDER)
+    with col2:
+        if st.button("🖼️ Send Newdle Reminder"):
+            send_schedule_reminder()
     with col3:
         if st.button("📢 Send Notification"):
             send_schedule_notification()
