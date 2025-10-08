@@ -28,7 +28,7 @@ os.makedirs(AVAILABILITY_FOLDER, exist_ok=True)
 #WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/fr7t634m9jbqmmjkgpz7knhnih" # TIF channel
 WEBHOOK_URL = "https://mattermost.web.cern.ch/hooks/crdexmh4abb13b13wo5s7ux5se"
 CHANNEL_ID = "hgyg9i1effg8pd8ser3kuowueh"  # optional
-SCHEDULE_WEBPAGE_URL = "https://yourwebsite.com/weekly-roster"  # replace with your URL
+SCHEDULE_WEBPAGE_URL = "https://btlroster.grealesguti.com/"  # replace with your URL
 PASSWORD = "123"  # Replace with your desired password
 # -------------------
 # CONFIG
