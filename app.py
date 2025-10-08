@@ -1083,38 +1083,71 @@ if safe_password == PASSWORD:
     activity_colors = plt.cm.Set2.colors
     activity_colors_dict = {act: activity_colors[i % len(activity_colors)] if act != "None" else "gray" for i, act in enumerate(activities)}
 
+    import streamlit as st
+    import pandas as pd
+    import os
+    import glob
+
     # -------------------
     # Actions
     # -------------------
     st.subheader("Pre-processing")
-    if st.button("📤 Upload & Save Newdle CSV"):
-        uploaded_df = upload_and_save_newdle_csv()
-        if uploaded_df is not None:
+
+    # Upload CSV (preview immediately)
+    uploaded_file = st.file_uploader("Upload a Newdle CSV", type="csv")
+
+    if uploaded_file is not None:
+        try:
+            uploaded_df = pd.read_csv(uploaded_file)
+            st.success("CSV loaded successfully!")
             st.write("Preview of uploaded CSV:")
             st.dataframe(uploaded_df)
-    
+
+            # Optional: save uploaded file to folder automatically
+            save_path = os.path.join(NEWDLE_FOLDER, os.path.basename(uploaded_file.name))
+            uploaded_df.to_csv(save_path, index=False)
+            st.success(f"Uploaded CSV saved to `{save_path}`")
+        except Exception as e:
+            st.error(f"Error reading uploaded CSV: {e}")
+            st.exception(e)  # show full traceback for debugging
+
     # Find all CSVs in the folder
-    #csv_files = glob(os.path.join(NEWDLE_FOLDER, "*.csv"))
-    csv_files = glob.glob(os.path.join(NEWDLE_FOLDER, "*.csv"))  # works
+    try:
+        csv_files = glob.glob(os.path.join(NEWDLE_FOLDER, "*.csv"))
+        csv_files.sort(key=os.path.getmtime, reverse=True)  # newest first
 
-    csv_files.sort(key=os.path.getmtime, reverse=True)  # newest first
+        if not csv_files:
+            st.warning(f"No CSV files found in folder '{NEWDLE_FOLDER}'")
+        else:
+            st.subheader("Select a Newdle CSV to process")
+            selected_csv = st.selectbox(
+                "Choose CSV", csv_files, format_func=lambda x: os.path.basename(x)
+            )
 
-    if not csv_files:
-        st.warning(f"No CSV files found in folder '{NEWDLE_FOLDER}'")
-    else:
-        st.subheader("Select a Newdle CSV to process")
-        selected_csv = st.selectbox("Choose CSV", csv_files, format_func=lambda x: os.path.basename(x))
-
-        if st.button("📤 Process Selected CSV"):
+            # Automatically preview the selected CSV
             try:
-                availability_df, save_path = process_newdle_csv(selected_csv, AVAILABILITY_FOLDER)
-                st.success(f"Processed successfully! Saved to `{save_path}`")
-                st.dataframe(availability_df)
+                preview_df = pd.read_csv(selected_csv)
+                st.write(f"Preview of selected CSV: `{os.path.basename(selected_csv)}`")
+                st.dataframe(preview_df)
             except Exception as e:
-                st.error(f"Error processing CSV: {e}")
+                st.error(f"Error reading selected CSV: {e}")
+                st.exception(e)
 
+            # Process button
+            if st.button("📤 Process Selected CSV"):
+                try:
+                    availability_df, save_path = process_newdle_csv(selected_csv, AVAILABILITY_FOLDER)
+                    st.success(f"Processed successfully! Saved to `{save_path}`")
+                    st.dataframe(availability_df)
+                except Exception as e:
+                    st.error(f"Error processing CSV: {e}")
+                    st.exception(e)
 
-    # -------------------
+    except Exception as e:
+        st.error(f"Error accessing CSV files in folder `{NEWDLE_FOLDER}`: {e}")
+        st.exception(e)
+
+        # -------------------
     # Update links and titles form
     # -------------------
     st.markdown("### Update Next Newdle Links and Titles (up to 4)")
