@@ -526,8 +526,9 @@ def load_availability(csv_path):
     st.write(f"Loaded availability CSV ({len(df)} rows)")
     st.write(df.head())
     return df
-
-
+import os
+import pandas as pd
+import streamlit as st
 
 def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY_FOLDER):
     """
@@ -554,6 +555,7 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
     # --- Prefill buttons and dropdowns ---
     col1, col2 = st.columns(2)
 
+    # Roster CSVs
     roster_files = sorted([f for f in os.listdir(SAVE_FOLDER) if f.endswith(".csv")], reverse=True)
     selected_roster_csv = st.selectbox("Select roster CSV to prefill", ["LATEST"] + roster_files)
 
@@ -567,28 +569,30 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
 
             if csv_path and os.path.exists(csv_path):
                 latest_roster_df = pd.read_csv(csv_path, dtype=str).fillna("None")
-                for row in st.session_state["roster_data"]:
-                    match = latest_roster_df[
-                        (latest_roster_df.get("Day", "") == row["Day"]) &
-                        (latest_roster_df.get("Hour", "") == row["Hour"])
-                    ]
-                    if not match.empty:
-                        for e in range(1, 9):
-                            value = match.iloc[0].get(f"Emp{e}", "None") or "None"
-                            key = f"{row['Day']}_{row['Hour']}_Emp{e}"
-                            st.session_state[key] = value
-                            row[f"Emp{e}"] = value
 
-                        for a in range(1, 5):
-                            value = match.iloc[0].get(f"Act{a}", "None") or "None"
-                            key = f"{row['Day']}_{row['Hour']}_Act{a}"
-                            st.session_state[key] = value
-                            row[f"Act{a}"] = value
+                # Rebuild roster_data entirely from CSV
+                new_roster_data = []
+                for _, r_row in latest_roster_df.iterrows():
+                    day, hour = r_row["Day"], r_row["Hour"]
+                    row_data = {
+                        "Day": day, "Hour": hour,
+                        **{f"Emp{i}": r_row.get(f"Emp{i}", "None") or "None" for i in range(1, 9)},
+                        **{f"Act{j}": r_row.get(f"Act{j}", "None") or "None" for j in range(1, 5)}
+                    }
+                    # Ensure activities are valid
+                    for a in range(1, 5):
+                        if row_data[f"Act{a}"] not in activities:
+                            row_data[f"Act{a}"] = "None"
 
+                    new_roster_data.append(row_data)
 
+                st.session_state["roster_data"] = new_roster_data
+                st.success("Roster prefilled from selected CSV!")
+
+    # Availability CSVs
     avail_files = sorted([f for f in os.listdir(AVAILABILITY_FOLDER) if f.endswith(".csv")], reverse=True)
     selected_avail_csv = st.selectbox("Select availability CSV to prefill", ["LATEST"] + avail_files)
-    
+
     with col2:
         if st.button("📅 Prefill from Selected Availability"):
             csv_path = None
@@ -600,48 +604,42 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             if csv_path and os.path.exists(csv_path):
                 availability_df = pd.read_csv(csv_path, dtype=str).fillna("None")
 
-                for row in st.session_state["roster_data"]:
-                    available_emps = availability_df[
-                        (availability_df.get("Day", "") == row["Day"]) &
-                        (availability_df.get("Hour", "") == row["Hour"]) &
-                        (availability_df.get("Availability", "").str.lower() == "available")
-                    ]["Name"].tolist()
+                # Rebuild roster_data from availability CSV dynamically
+                new_roster_data = []
+                grouped = availability_df.groupby(["Day", "Hour"])
+                for (day, hour), group in grouped:
+                    available_emps = group[group["Availability"].str.lower() == "available"]["Name"].tolist()
+                    row_data = {
+                        "Day": day,
+                        "Hour": hour,
+                        **{f"Emp{i}": available_emps[i-1] if len(available_emps) >= i else "None" for i in range(1, 9)},
+                        **{f"Act{j}": "None" for j in range(1, 5)}
+                    }
+                    new_roster_data.append(row_data)
 
-                    for e in range(1, 9):
-                        value = available_emps[e-1] if len(available_emps) >= e else "None"
-                        key = f"{row['Day']}_{row['Hour']}_Emp{e}"
-                        st.session_state[key] = value
-                        row[f"Emp{e}"] = value
-
-                    for a in range(1, 5):
-                        value = row[f"Act{a}"] if row[f"Act{a}"] in activities else "None"
-                        key = f"{row['Day']}_{row['Hour']}_Act{a}"
-                        st.session_state[key] = value
-                        row[f"Act{a}"] = value
-
+                st.session_state["roster_data"] = new_roster_data
+                st.success("Roster prefilled from selected availability CSV!")
 
     # --- Build editor UI ---
-    employees = sorted(set([r[e] for r in st.session_state["roster_data"] for e in [f"Emp{i}" for i in range(1, 9)]]))
+    employees = sorted(set(
+        r[e] for r in st.session_state["roster_data"] for e in [f"Emp{i}" for i in range(1, 9)]
+    ))
     employee_options = ["None"] + employees
 
     def get_act_box_color(act_val):
         return "#f4cccc" if act_val.lower() == "none" else "#d0f0c0"
 
-    for day in days:
+    for day in sorted({r["Day"] for r in st.session_state["roster_data"]}):
         st.subheader(day)
-        for hour in shift_hours:
+        hours_for_day = sorted({r["Hour"] for r in st.session_state["roster_data"] if r["Day"] == day})
+        for hour in hours_for_day:
             row_data = next(r for r in st.session_state["roster_data"] if r["Day"] == day and r["Hour"] == hour)
-
             st.markdown(f"**Hour: {hour}**")
 
             # --- Row 1 ---
             row1_cols = st.columns(6)
             for i, field in enumerate(["Emp1", "Emp2", "Act1", "Emp3", "Emp4", "Act2"]):
-                if "Emp" in field:
-                    options = employee_options
-                else:
-                    # Dropdown = CSV value + fixed activities list
-                    options = [row_data[field]] + [a for a in activities if a != row_data[field]]
+                options = employee_options if "Emp" in field else [row_data[field]] + [a for a in activities if a != row_data[field]]
                 idx = 0 if row_data[field] not in options else options.index(row_data[field])
                 row_data[field] = row1_cols[i].selectbox(field, options, index=idx, key=f"{day}_{hour}_{field}")
                 if row_data[field] != "None":
@@ -654,11 +652,7 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             # --- Row 2 ---
             row2_cols = st.columns(6)
             for i, field in enumerate(["Emp5", "Emp6", "Act3", "Emp7", "Emp8", "Act4"]):
-                if "Emp" in field:
-                    options = employee_options
-                else:
-                    # Dropdown = CSV value + fixed activities list
-                    options = [row_data[field]] + [a for a in activities if a != row_data[field]]
+                options = employee_options if "Emp" in field else [row_data[field]] + [a for a in activities if a != row_data[field]]
                 idx = 0 if row_data[field] not in options else options.index(row_data[field])
                 row_data[field] = row2_cols[i].selectbox(field, options, index=idx, key=f"{day}_{hour}_{field}")
                 if row_data[field] != "None":
