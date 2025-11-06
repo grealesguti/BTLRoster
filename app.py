@@ -388,7 +388,7 @@ import requests
 import streamlit as st
 
 def send_schedule_reminder():
-    """ @channel Send a Mattermost message announcing the latest Newdles."""
+    """Send a Mattermost message announcing the latest Newdles."""
 
     # Get latest links from session state
     links_data = st.session_state.get("newdle_links_data", [])
@@ -396,6 +396,9 @@ def send_schedule_reminder():
     if not links_data:
         st.warning("No Newdle links available to send.")
         return
+
+    # Ask whether to mention everyone
+    #mention_all = st.checkbox("Notify everyone (@channel)", value=False)
 
     # Build the message with titles and links
     message_lines = ["A reminder to fill the last Newdles! Check the links below:"]
@@ -406,6 +409,11 @@ def send_schedule_reminder():
             message_lines.append(f"- {title}: {link}")
 
     message_text = "\n".join(message_lines)
+
+    # Add @channel or @all mention if selected
+    #if mention_all:
+    #    message_text = f"@channel {message_text}"
+    message_text = f"@channel {message_text}"
 
     # Prepare payload
     payload = {
@@ -422,6 +430,7 @@ def send_schedule_reminder():
             st.error(f"Failed to send message: {response.status_code} {response.text}")
     except Exception as e:
         st.error(f"Error sending message: {e}")
+
 
         
 def save_uploaded_csv(uploaded_file, folder):
@@ -969,9 +978,13 @@ import os
 # Configuration
 # -------------------
 st.set_page_config(layout="wide")
-LINKS_FILE = "newdle_links.json"
+import os, json
 
-# Default links and titles
+LINKS_FILE = "app/NewdleLinks.txt"
+
+# -------------------
+# Default links and titles (fallback)
+# -------------------
 default_links_data = [
     {"link": "https://newdle.cern.ch/newdle/w5NzNRKR", "title": "Newdle Event 1"},
     {"link": "https://example.com/newdle2", "title": "Example Event 2"},
@@ -980,23 +993,42 @@ default_links_data = [
 ]
 
 # -------------------
-# Ensure file exists
+# Load links from the text file (custom format)
 # -------------------
-if not os.path.exists(LINKS_FILE):
-    with open(LINKS_FILE, "w") as f:
-        json.dump(default_links_data, f, indent=2)
+links_data = []
+
+if os.path.exists(LINKS_FILE):
+    try:
+        with open(LINKS_FILE, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        # Expect alternating lines: title:, then link
+        for i in range(0, len(lines), 2):
+            title_line = lines[i]
+            link_line = lines[i + 1] if i + 1 < len(lines) else ""
+
+            # Remove trailing colon if present
+            if title_line.endswith(":"):
+                title_line = title_line[:-1]
+
+            links_data.append({
+                "title": title_line.strip(),
+                "link": link_line.strip()
+            })
+    except Exception as e:
+        st.warning(f"Error reading {LINKS_FILE}: {e}")
+        links_data = default_links_data
+else:
+    st.warning(f"{LINKS_FILE} not found, using defaults.")
+    links_data = default_links_data
+
+# Pad to 4 entries
+while len(links_data) < 4:
+    links_data.append({"link": "", "title": ""})
 
 # -------------------
-# Load links from file
-# -------------------
-with open(LINKS_FILE, "r") as f:
-    links_data = json.load(f)
-
-# Convert old format (list of strings) to new format (list of dicts)
-if links_data and isinstance(links_data[0], str):
-    links_data = [{"link": l, "title": ""} for l in links_data]
-
 # Store in session state
+# -------------------
 if "newdle_links_data" not in st.session_state:
     st.session_state["newdle_links_data"] = links_data
 
@@ -1147,10 +1179,15 @@ if safe_password == PASSWORD:
         st.error(f"Error accessing CSV files in folder `{NEWDLE_FOLDER}`: {e}")
         st.exception(e)
 
-        # -------------------
+    # -------------------
     # Update links and titles form
     # -------------------
     st.markdown("### Update Next Newdle Links and Titles (up to 4)")
+    
+    # Ensure session state exists
+    if "newdle_links_data" not in st.session_state:
+        st.session_state["newdle_links_data"] = [{"link": "", "title": ""} for _ in range(4)]
+    
     new_links_data = []
     for i in range(4):
         col1, col2 = st.columns([3, 2])
@@ -1167,15 +1204,31 @@ if safe_password == PASSWORD:
                 key=f"title_input_{i}"
             )
         new_links_data.append({"link": link_input.strip(), "title": title_input.strip()})
-
-    # Save updates to file
-    if st.button("💾 Save Links and Titles"):
-        st.session_state["newdle_links_data"] = new_links_data
-        with open(LINKS_FILE, "w") as f:
-            json.dump(new_links_data, f, indent=2)
-        st.success("Newdle links and titles saved permanently!")
-                
     
+    # Button to save
+    if st.button("💾 Save Links and Update File"):
+        # Update session state
+        st.session_state["newdle_links_data"] = new_links_data
+    
+        # Build text for the file
+        lines = []
+        for item in new_links_data:
+            if item["link"]:
+                title = item["title"] or "Untitled"
+                lines.append(f"{title}:\n{item['link']}")
+    
+        file_content = "\n".join(lines)
+    
+        # Write to file
+        try:
+            with open("app/NewdleLinks.txt", "w", encoding="utf-8") as f:
+                f.write(file_content)
+            st.success("✅ Links updated and saved to app/NewdleLinks.txt")
+        except Exception as e:
+            st.error(f"Error writing to file: {e}")
+
+                
+    #############
     st.subheader("Actions")
     col1, col2, col3 = st.columns(3)
     #with col1:

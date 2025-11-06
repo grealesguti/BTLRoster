@@ -10,5 +10,6 @@ services:
       - ./app/Newdles:/app/app/Newdles
       - ./app/weekly_rosters:/app/app/weekly_rosters
       - ./app/Availability:/app/app/Availability
+      - ./app/:/app/app/
     restart: unless-stopped
 
