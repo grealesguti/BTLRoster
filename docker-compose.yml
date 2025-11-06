@@ -7,8 +7,8 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./Newdles:/app/Newdles
-      - ./weekly_rosters:/app/weekly_rosters
-      - ./Availability:/app/Availability
+      - ./app/Newdles:/app/app/Newdles
+      - ./app/weekly_rosters:/app/app/weekly_rosters
+      - ./app/Availability:/app/app/Availability
     restart: unless-stopped
 

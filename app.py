@@ -373,7 +373,7 @@ def generate_employee_ics(roster_data, employee_name):
     return c
 def send_schedule_notification():
     """Send a Mattermost message announcing a new schedule."""
-    message_text = f"A new weekly schedule is available! Check it here: {SCHEDULE_WEBPAGE_URL}"
+    message_text = f"@channel A new weekly schedule is available! Check it here: {SCHEDULE_WEBPAGE_URL}"
     payload = {
         "channel_id": CHANNEL_ID,
         "text": message_text
@@ -388,7 +388,7 @@ import requests
 import streamlit as st
 
 def send_schedule_reminder():
-    """Send a Mattermost message announcing the latest Newdles."""
+    """ @channel Send a Mattermost message announcing the latest Newdles."""
 
     # Get latest links from session state
     links_data = st.session_state.get("newdle_links_data", [])

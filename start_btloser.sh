@@ -1,5 +1,5 @@
 #!/bin/bash
-# start_btloser.sh
+# start_btloser.sh - debug version
 
 cd "$(dirname "$0")"
 
@@ -13,4 +13,22 @@ docker compose build
 docker compose up -d
 
 echo "BTL Roster app is running in Docker. Access it on http://<server-ip>:8501"
+
+# ------------------------------
+# Debug: check folder mappings
+# ------------------------------
+
+echo "=== Host folder contents ==="
+echo "Newdles:"
+ls -l /mnt/VDEV/appData/Stacks/BTLApps/BTLRoster/app/Newdles
+echo "weekly_rosters:"
+ls -l /mnt/VDEV/appData/Stacks/BTLApps/BTLRoster/app/weekly_rosters
+echo "Availability:"
+ls -l /mnt/VDEV/appData/Stacks/BTLApps/BTLRoster/app/Availability
+
+echo
+echo "=== Container folder contents ==="
+docker exec btloser_app ls -l /app/Newdles
+docker exec btloser_app ls -l /app/weekly_rosters
+docker exec btloser_app ls -l /app/Availability
 
