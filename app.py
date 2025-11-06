@@ -926,8 +926,8 @@ def save_roster(df, days, shift_hours, employee_colors, activity_colors_dict, sa
 import os
 import streamlit as st
 
-def show_notes_box(filename="notes.txt", default_text="No notes yet. Write something below!"):
-    """Display the contents of a txt file in an editable text box. 
+def show_notes_box(filename="notes.txt", default_text="No notes yet."):
+    """Display the contents of a txt file in a non-editable text box. 
     If the file doesn't exist, create it with default_text.
     """
     # Ensure directory exists
@@ -943,18 +943,8 @@ def show_notes_box(filename="notes.txt", default_text="No notes yet. Write somet
         content = f.read()
 
     st.subheader("Notes")
+    st.text_area("File contents", value=content, height=300, disabled=True)
 
-    # Editable text area
-    new_content = st.text_area("File contents", value=content, height=300)
-
-    # Save button
-    if st.button(f"💾 Save {os.path.basename(filename)}"):
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            st.success(f"Changes saved to {filename}")
-        except Exception as e:
-            st.error(f"Error saving file: {e}")
 
 import html
 
