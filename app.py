@@ -538,7 +538,6 @@ def load_availability(csv_path):
 import os
 import pandas as pd
 import streamlit as st
-
 def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY_FOLDER):
     """
     Streamlit roster editor:
@@ -547,7 +546,12 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
     - Dropdowns to select older CSVs
     - Highlights prefilled values: green for valid, red for None
     - Layout: 2 rows of assignments per hour
+    - Adds employee names from extra_names.txt (if exists) to dropdowns
     """
+    import os
+    import pandas as pd
+    import streamlit as st
+
     st.header("Roster Editor")
 
     # --- Initialize roster_data ---
@@ -579,7 +583,6 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             if csv_path and os.path.exists(csv_path):
                 latest_roster_df = pd.read_csv(csv_path, dtype=str).fillna("None")
 
-                # Rebuild roster_data entirely from CSV
                 new_roster_data = []
                 for _, r_row in latest_roster_df.iterrows():
                     day, hour = r_row["Day"], r_row["Hour"]
@@ -613,7 +616,6 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
             if csv_path and os.path.exists(csv_path):
                 availability_df = pd.read_csv(csv_path, dtype=str).fillna("None")
 
-                # Rebuild roster_data from availability CSV dynamically
                 new_roster_data = []
                 grouped = availability_df.groupby(["Day", "Hour"])
                 for (day, hour), group in grouped:
@@ -629,15 +631,24 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
                 st.session_state["roster_data"] = new_roster_data
                 st.success("Roster prefilled from selected availability CSV!")
 
-    # --- Build editor UI ---
+    # --- Build employee options ---
     employees = sorted(set(
         r[e] for r in st.session_state["roster_data"] for e in [f"Emp{i}" for i in range(1, 9)]
-    ))
+    ) - {"None"})
+
+    # Add extra names from extra_names.txt (if present)
+    extra_file = os.path.join(SAVE_FOLDER, "extra_names.txt")
+    if os.path.exists(extra_file):
+        with open(extra_file, "r", encoding="utf-8") as f:
+            extra_names = [line.strip() for line in f if line.strip()]
+        employees = sorted(set(employees) | set(extra_names))
+
     employee_options = ["None"] + employees
 
     def get_act_box_color(act_val):
         return "#f4cccc" if act_val.lower() == "none" else "#d0f0c0"
 
+    # --- Build editor UI ---
     for day in sorted({r["Day"] for r in st.session_state["roster_data"]}):
         st.subheader(day)
         hours_for_day = sorted({r["Hour"] for r in st.session_state["roster_data"] if r["Day"] == day})
@@ -672,8 +683,6 @@ def build_roster_editor(days, shift_hours, activities, SAVE_FOLDER, AVAILABILITY
                     )
 
     return st.session_state["roster_data"]
-
-
 
 
 def save_and_plot(days, shift_hours, employee_colors, activity_colors_dict, save_folder, suffix):
@@ -1297,6 +1306,45 @@ if safe_password == PASSWORD:
             for act in new_activities:
                 f.write(act + "\n")
         st.success("Activities saved!")
+    
+    # --- Extra Names Editor ---
+    EXTRA_NAMES_FILE = os.path.join(SAVE_FOLDER, "extra_names.txt")
+    
+    st.write("### Extra Names")
+    
+    # Ensure the file exists
+    if not os.path.exists(EXTRA_NAMES_FILE):
+        with open(EXTRA_NAMES_FILE, "w", encoding="utf-8") as f:
+            f.write("")  # create empty file
+    
+    # Read current names
+    with open(EXTRA_NAMES_FILE, "r", encoding="utf-8") as f:
+        extra_names = [line.strip() for line in f if line.strip()]
+    
+    # Editable text area
+    extra_names_text = st.text_area(
+        "Edit extra names (one per line):",
+        value="\n".join(extra_names),
+        height=200,
+    )
+    
+    # Save button
+    if st.button("Save Extra Names"):
+        new_names = [line.strip() for line in extra_names_text.split("\n") if line.strip()]
+        # Deduplicate case-insensitively while preserving first appearance
+        seen = set()
+        unique_names = []
+        for name in new_names:
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                unique_names.append(name)
+    
+        with open(EXTRA_NAMES_FILE, "w", encoding="utf-8") as f:
+            for name in unique_names:
+                f.write(name + "\n")
+    
+        st.success(f"Saved {len(unique_names)} unique names to extra_names.txt!")
+
 
 
 else:
